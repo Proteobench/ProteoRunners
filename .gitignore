@@ -1,0 +1,8 @@
+org/
+results/
+__pycache__/
+*-workspace
+*.parquet
+*.speclib
+*.txt
+*run_summary

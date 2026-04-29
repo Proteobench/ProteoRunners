@@ -1,0 +1,267 @@
+"""DIA-NN runner.
+
+Supported search_params keys (others ignored):
+  fdr_psm, fdr_protein, match_between_runs,
+  precursor_mass_tolerance_ppm, fragment_mass_tolerance_ppm,
+  missed_cleavages, min_peptide_length, max_peptide_length,
+  fixed_mods, variable_mods, max_mods_per_peptide,
+  min_charge, max_charge, precursor_mz_range, fragment_mz_range
+
+Not mapped (DIA-NN has no separate peptide-level FDR):
+  fdr_peptide
+"""
+
+from __future__ import annotations
+
+import logging
+import signal
+import subprocess
+from pathlib import Path
+
+from .base import DDA, DIA, ENZYME_MAP, BaseRunner
+
+logger = logging.getLogger(__name__)
+
+# Cache smoke-test results per binary path so we don't re-run for every dataset.
+_binary_smoke_cache: dict[str, str | None] = {}  # path → error string or None
+
+
+def _smoke_test_binary(binary: str) -> str | None:
+    """Return an error string if the binary crashes on startup, else None."""
+    if binary in _binary_smoke_cache:
+        return _binary_smoke_cache[binary]
+    try:
+        r = subprocess.run([binary], capture_output=True, timeout=5)
+        if r.returncode < 0:
+            sig = -r.returncode
+            try:
+                sig_name = signal.Signals(sig).name
+            except ValueError:
+                sig_name = str(sig)
+            err = (
+                f"DIA-NN binary crashes on startup (signal {sig_name}); "
+                "likely a library or CPU-instruction incompatibility on this system."
+            )
+        else:
+            err = None
+    except subprocess.TimeoutExpired:
+        err = None  # binary is running — not a startup crash
+    except Exception as exc:
+        err = f"Could not smoke-test DIA-NN binary: {exc}"
+    _binary_smoke_cache[binary] = err
+    return err
+
+# Carbamidomethyl (C) as a fixed mod has a built-in shortcut flag; DIA-NN requires
+# explicit mass+residue specs for everything else via --fixed-mod / --var-mod.
+_FIXED_MOD_SHORTCUT: dict[str, str] = {
+    "Carbamidomethyl (C)": "--unimod4",
+}
+
+# UniMod spec strings for --fixed-mod / --var-mod.
+# Multi-residue mods are stored as a list (one entry per residue).
+_MOD_SPECS: dict[str, list[str]] = {
+    "Carbamidomethyl (C)": ["UniMod:4,57.021464,C"],
+    "Oxidation (M)":       ["UniMod:35,15.994915,M"],
+    "Phospho (STY)":       ["UniMod:21,79.966331,S",
+                             "UniMod:21,79.966331,T",
+                             "UniMod:21,79.966331,Y"],
+    "Acetyl (Protein N-term)": ["UniMod:1,42.010565,*n"],
+    "Deamidation (NQ)":    ["UniMod:7,0.984016,N",
+                             "UniMod:7,0.984016,Q"],
+}
+
+
+class DIANNRunner(BaseRunner):
+    SUPPORTED_ACQUISITIONS = (DDA, DIA)
+
+    def _major_version(self) -> int | None:
+        """Best-effort parse of major version from version_id (e.g. '2.5.0' -> 2)."""
+        try:
+            major_str = str(self.version_id).split(".", 1)[0]
+            return int(major_str)
+        except Exception:
+            return None
+
+    def _requires_mzml_for_raw(self) -> bool:
+        """DIA-NN < 2 cannot process Thermo .raw directly on Linux; use mzML instead."""
+        major = self._major_version()
+        return major is not None and major < 2
+
+    def _mzml_search_dirs(self) -> list[Path]:
+        """Return candidate directories to search for mzML when dataset is configured as RAW.
+
+        Convention: if dataset path is /path/DATASET, prefer /path/DATASET_mzml.
+        """
+        dataset_path = Path(self.dataset_cfg["path"])
+        redirected = dataset_path.parent / f"{dataset_path.name}_mzml"
+        # Prefer redirected folder first, then fall back to the original dataset folder.
+        if redirected == dataset_path:
+            return [dataset_path]
+        return [redirected, dataset_path]
+
+    def _find_mzml_files(self, dataset_dir: Path) -> list[Path]:
+        return sorted(dataset_dir.glob("*.mzML")) or sorted(dataset_dir.glob("*.mzml"))
+
+    def get_input_files(self) -> list[Path]:
+        # DIA-NN 1.x cannot handle Thermo .raw. If the dataset is configured as
+        # raw, redirect to an *_mzml sibling folder when available.
+        if self.dataset_cfg.get("format") == "raw" and self._requires_mzml_for_raw():
+            for d in self._mzml_search_dirs():
+                if d.exists():
+                    mzmls = self._find_mzml_files(d)
+                    if mzmls:
+                        return mzmls
+        return super().get_input_files()
+
+        return super().get_input_files()
+
+    @property
+    def tool_name(self) -> str:
+        return "diann"
+
+    def is_compatible(self) -> bool:
+        if not super().is_compatible():
+            return False
+        if self.acquisition == DDA and not self.version_cfg.get("supports_dda", False):
+            return False
+        return True
+
+    def preflight_check(self) -> list[str]:
+        errors: list[str] = []
+
+        # Dataset + fasta checks (customised to support RAW→mzML redirection)
+        dataset_path = Path(self.dataset_cfg["path"])
+        if not dataset_path.exists():
+            errors.append(f"Dataset path not found: {dataset_path}")
+
+        fasta = Path(self.dataset_cfg["fasta"])
+        if not fasta.exists():
+            errors.append(f"FASTA not found: {fasta}")
+
+        input_files = self.get_input_files()
+        if not input_files:
+            if self.dataset_cfg.get("format") == "raw" and self._requires_mzml_for_raw():
+                candidates = ", ".join(str(p) for p in self._mzml_search_dirs())
+                errors.append(
+                    "DIA-NN < 2.0 cannot run on Thermo .raw inputs; "
+                    f"no mzML files found in candidate folder(s): {candidates}."
+                )
+            else:
+                errors.append(f"No input MS files found in {dataset_path}")
+
+        binary = Path(self.version_cfg["binary"])
+        if not binary.exists():
+            errors.append(f"DIA-NN binary not found: {binary}")
+            return errors
+        smoke_err = _smoke_test_binary(str(binary))
+        if smoke_err:
+            errors.append(smoke_err)
+        return errors
+
+    def map_params(self) -> dict:
+        sp = self.search_params
+        enzyme_key = sp.get("enzyme", "trypsin")
+        enzyme_info = ENZYME_MAP.get(enzyme_key, ENZYME_MAP["trypsin"])
+        precursor_mz = sp.get("precursor_mz_range", [400.0, 1200.0])
+        fragment_mz  = sp.get("fragment_mz_range",  [200.0, 2000.0])
+
+        return {
+            "enzyme":           enzyme_info["diann"],
+            "missed_cleavages": sp.get("missed_cleavages", 2),
+            "min_pep_length":   sp.get("min_peptide_length", 7),
+            "max_pep_length":   sp.get("max_peptide_length", 30),
+            "mass_acc":         sp.get("fragment_mass_tolerance_ppm", 20),
+            "mass_acc_ms1":     sp.get("precursor_mass_tolerance_ppm", 20),
+            "fdr_psm":          sp.get("fdr_psm", 0.01),
+            "fdr_protein":      sp.get("fdr_protein", 0.01),
+            "fixed_mods":       list(sp.get("fixed_mods", [])),
+            "var_mods":         list(sp.get("variable_mods", [])),
+            "max_mods":         sp.get("max_mods_per_peptide", 3),
+            "min_charge":       sp.get("min_charge", 2),
+            "max_charge":       sp.get("max_charge", 4),
+            "min_pr_mz":        precursor_mz[0],
+            "max_pr_mz":        precursor_mz[1],
+            "min_fr_mz":        fragment_mz[0],
+            "max_fr_mz":        fragment_mz[1],
+            "mbr":              sp.get("match_between_runs", False),
+        }
+
+    def _fixed_mod_args(self, mod_names: list[str]) -> list[str]:
+        """Return CLI args for fixed modifications."""
+        args: list[str] = []
+        for m in mod_names:
+            if m in _FIXED_MOD_SHORTCUT:
+                args.append(_FIXED_MOD_SHORTCUT[m])
+            else:
+                for spec in _MOD_SPECS.get(m, []):
+                    args += ["--fixed-mod", spec]
+        return args
+
+    def _var_mod_args(self, mod_names: list[str]) -> list[str]:
+        """Return CLI args for variable modifications."""
+        args: list[str] = []
+        for m in mod_names:
+            for spec in _MOD_SPECS.get(m, []):
+                args += ["--var-mod", spec]
+        return args
+
+    def pre_run_hook(self, input_files: list[Path]) -> None:
+        # DIA-NN writes .quant files next to the raw input files and refuses to
+        # process them if they were generated by a different version. Delete any
+        # stale .quant files before each run so versions don't interfere.
+        for f in input_files:
+            quant = f.parent / (f.name + ".quant")
+            if quant.exists():
+                try:
+                    quant.unlink()
+                    logger.info("[diann] removed stale .quant file: %s", quant)
+                except OSError as e:
+                    logger.warning("[diann] could not remove .quant file %s: %s", quant, e)
+
+    def build_command(self, input_files: list[Path], fasta: Path, output_dir: Path) -> list[str]:
+        binary  = str(self.version_cfg["binary"])
+        p       = self.map_params()
+        threads = self.global_cfg.get("threads_per_job", 16)
+
+        cmd = [binary]
+
+        for f in input_files:
+            cmd += ["--f", str(f)]
+
+        cmd += [
+            "--fasta", str(fasta),
+            "--out",   str(output_dir / "report.tsv"),
+            "--threads",          str(threads),
+            "--missed-cleavages", str(p["missed_cleavages"]),
+            "--min-pep-len",      str(p["min_pep_length"]),
+            "--max-pep-len",      str(p["max_pep_length"]),
+            "--mass-acc",         str(p["mass_acc"]),
+            "--mass-acc-ms1",     str(p["mass_acc_ms1"]),
+            "--qvalue",           str(p["fdr_psm"]),
+            "--protein-qvalue",   str(p["fdr_protein"]),
+            "--min-pr-charge",    str(p["min_charge"]),
+            "--max-pr-charge",    str(p["max_charge"]),
+            "--min-pr-mz",        str(int(p["min_pr_mz"])),
+            "--max-pr-mz",        str(int(p["max_pr_mz"])),
+            "--min-fr-mz",        str(int(p["min_fr_mz"])),
+            "--max-fr-mz",        str(int(p["max_fr_mz"])),
+        ]
+
+        cmd += self._fixed_mod_args(p["fixed_mods"])
+        cmd += self._var_mod_args(p["var_mods"])
+
+        library = (self.extra or {}).get("library", "")
+        if library:
+            cmd += ["--lib", str(library)]
+        else:
+            cmd.append("--gen-spec-lib")
+
+        cmd.append("--fasta-search")
+
+        if self.acquisition == DDA:
+            cmd.append("--dda")
+
+        if p["mbr"]:
+            cmd.append("--reanalyse")
+
+        return cmd

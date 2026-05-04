@@ -81,15 +81,20 @@ MOD_REGISTRY: dict[str, dict[str, Any]] = {
     },
 }
 
+#TODO: incorrect. Fix!
 ENZYME_MAP = {
-    "trypsin":      {"diann": "Trypsin", "alphadia": "trypsin", "sage_cleave_at": "KR", "sage_restrict": "P",
-                     "maxquant": "Trypsin/P", "metamorpheus": "trypsin"},
-    "lysc":         {"diann": "LysC",    "alphadia": "lysc",    "sage_cleave_at": "K",  "sage_restrict": None,
-                     "maxquant": "Lys-C", "metamorpheus": "Lys-C"},
-    "gluc":         {"diann": "GluC",    "alphadia": "gluc",    "sage_cleave_at": "DE", "sage_restrict": None,
-                     "maxquant": "Glu-C", "metamorpheus": "Glu-C"},
-    "chymotrypsin": {"diann": "Chymotrypsin", "alphadia": "chymotrypsin", "sage_cleave_at": "FWYL", "sage_restrict": None,
-                     "maxquant": "Chymotrypsin (FWYL)", "metamorpheus": "chymotrypsin"},
+    "trypsin":      {"diann": "K*,R*,!*P", "alphadia": "trypsin_not_p", "sage_cleave_at": "KR", "sage_restrict": "P",
+                     "maxquant": "Trypsin", "metamorpheus": "trypsin"},
+    "trypsin/p":    {"diann": "K*,R*",  "alphadia": "trypsin/p", "sage_cleave_at": "KR", "sage_restrict": None, "maxquant": "Trypsin/P", "metamorpheus": "trypsin"},
+    "lysc":         {"diann": "K*",    "alphadia": "lys-c",    "sage_cleave_at": "K",  "sage_restrict": None,
+                     "maxquant": "LysC", "metamorpheus": "Lys-C (cleave before proline)"},
+    "gluc":         {"diann": "E*",    "alphadia": "glu-c",    "sage_cleave_at": "E", "sage_restrict": None,
+                     "maxquant": "GluC", "metamorpheus": "Glu-C"},
+    "chymotrypsin": {"diann": "F*,Y*,W*,M*,L*,!*P", "alphadia": "chymotrypsin", "sage_cleave_at": "FWYLM", "sage_restrict": "P",
+                     "maxquant": "Chymotrypsin+", "metamorpheus": "chymotrypsin (cleave before P)"},
+    "aspn":         {"diann": "*D",    "alphadia": "asp-n",    "sage_cleave_at": "D",  "sage_restrict": None, "sage_c_terminal": True, "maxquant": "AspN", "metamorpheus": "Asp-N"},
+    "argc":         {"diann": "R*",    "alphadia": "arg-c",    "sage_cleave_at": "R",  "sage_restrict": None, "maxquant": "ArgC", "metamorpheus": "Arg-C"},
+    "non-specific": {"diann": "**",     "alphadia": "non-specific", "sage_cleave_at": "*", "sage_restrict": None, "maxquant": "unspecific", "metamorpheus": "non-specific"},
 }
 
 

@@ -1,5 +1,5 @@
 global:
-  output_dir: /home/robbe/PB_output/results/test_run
+  output_dir: /home/robbe/PB_output/results/MBRDIANN2.5
   max_parallel_jobs: 2
   threads_per_job: 32
   dotnet: /home/robbe/.dotnet/dotnet
@@ -10,14 +10,14 @@ global:
 # by each runner's map_params() method. Tools that lack a given setting ignore it.
 search_params:
   # Enzyme and digestion
-  enzyme: trypsin            # trypsin | lysc | gluc | aspn | chymotrypsin
-  missed_cleavages: 2
-  min_peptide_length: 7
+  enzyme: trypsin/p            # trypsin | lysc | gluc | aspn | chymotrypsin
+  missed_cleavages: 1
+  min_peptide_length: 6
   max_peptide_length: 30
 
   # Mass tolerances (ppm)
-  precursor_mass_tolerance_ppm: 20
-  fragment_mass_tolerance_ppm: 20
+  precursor_mass_tolerance_ppm: 10
+  fragment_mass_tolerance_ppm: 10
 
   # Precursor charge and m/z filters
   min_charge: 2
@@ -30,7 +30,7 @@ search_params:
     - Carbamidomethyl (C)
   variable_mods:
     - Oxidation (M)
-  max_mods_per_peptide: 3
+  max_mods_per_peptide: 1
 
   # FDR thresholds (fraction, e.g. 0.01 = 1%)
   fdr_psm: 0.01       # PSM / precursor level
@@ -38,7 +38,7 @@ search_params:
   fdr_protein: 0.01   # protein level
 
   # Match-between-runs
-  match_between_runs: false
+  match_between_runs: true
 
 datasets:
   HYE_DDA_Orbitrap:
@@ -114,124 +114,124 @@ datasets:
     fasta_decoy: /public/local/ProteoBench/fastas/2025-04-01-decoys-ProteoBenchFASTA_DDAQuantification.fasta.fas
 
 tools:
-  # diann:
-  #   versions:
-  #     # supports_dda: true from 2.1.0 onward (--dda flag); 1.9.x is DIA-only
-  #     - id: "2.5.0"
-  #       binary: /home/robbe/bin/diann-2.5.0/diann-linux
-  #       supports_dda: true
-  #       enabled: true
-  #     - id: "2.3.0"
-  #       binary: /home/robbe/bin/diann-2.3.0/diann-linux
-  #       supports_dda: true
-  #       enabled: true
-  #     - id: "2.2.0"
-  #       binary: /home/robbe/bin/diann-2.2.0/diann-linux
-  #       supports_dda: true
-  #       enabled: true
-  #     - id: "2.1.0"
-  #       binary: /home/robbe/bin/diann-2.1.0/diann-linux
-  #       supports_dda: true
-  #       enabled: true
-  #     - id: "1.9.2"
-  #       binary: /home/robbe/bin/diann-1.9.2/diann-linux
-  #       supports_dda: false
-  #       enabled: true
-  #     - id: "1.9.1"
-  #       binary: /home/robbe/bin/diann-1.9.1/diann-linux
-  #       supports_dda: false
-  #       enabled: true
-  #   # DIA datasets + DDA datasets (only run on DDA if version supports_dda: true)
-  #   datasets:
-  #     - HYE_Astral
-  #     # - HYE_Astral_mzml
-  #     - HYE_Astral_Single_Cell
-  #     - HYE_diaPASEF
-  #     # - HYE_ZenoSWATH - Not possible on linux
-  #     - PYE_diaPASEF
-  #     # - HYE_DDA_Orbitrap
-  #     # - HYE_DDA_Astral
-  #   extra:
-  #     library: ""       # path to spectral library; empty = library-free mode
+  diann:
+    versions:
+      # supports_dda: true from 2.1.0 onward (--dda flag); 1.9.x is DIA-only
+      - id: "2.5.0"
+        binary: /home/robbe/bin/diann-2.5.0/diann-linux
+        supports_dda: true
+        enabled: true
+      - id: "2.3.0"
+        binary: /home/robbe/bin/diann-2.3.0/diann-linux
+        supports_dda: false
+        enabled: false
+      - id: "2.2.0"
+        binary: /home/robbe/bin/diann-2.2.0/diann-linux
+        supports_dda: false
+        enabled: false
+      - id: "2.1.0"
+        binary: /home/robbe/bin/diann-2.1.0/diann-linux
+        supports_dda: false
+        enabled: false
+      - id: "1.9.2"
+        binary: /home/robbe/bin/diann-1.9.2/diann-linux
+        supports_dda: false
+        enabled: false
+      - id: "1.9.1"
+        binary: /home/robbe/bin/diann-1.9.1/diann-linux
+        supports_dda: false
+        enabled: false
+    # DIA datasets + DDA datasets (only run on DDA if version supports_dda: true)
+    datasets:
+      # - HYE_Astral
+      # # - HYE_Astral_mzml
+      # - HYE_Astral_Single_Cell
+      # - HYE_diaPASEF
+      # # # - HYE_ZenoSWATH - Not possible on linux
+      # - PYE_diaPASEF
+      # - HYE_DDA_Orbitrap
+      # - HYE_DDA_Astral
+    extra:
+      library: ""       # path to spectral library; empty = library-free mode
 
-  # alphadia:
-  #   # DIA only
-  #   versions:
-  #     - id: "2.1.1"
-  #       command: /home/robbe/.pyenv/versions/alphaida/bin/alphadia
-  #       enabled: true
-  #   datasets:
-  #     - HYE_Astral
-  #     - HYE_Astral_Single_Cell
-  #     # - HYE_diaPASEF
-  #     - HYE_ZenoSWATH
-  #     # - PYE_diaPASEF
-  #   extra:
-  #     library: ""
+  alphadia:
+    # DIA only
+    versions:
+      - id: "2.1.1"
+        command: /home/robbe/.pyenv/versions/alphaida/bin/alphadia
+        enabled: false
+    datasets:
+      - HYE_Astral
+      - HYE_Astral_Single_Cell
+      # - HYE_diaPASEF
+      - HYE_ZenoSWATH
+      # - PYE_diaPASEF
+    extra:
+      library: ""
 
-  # sage:
-  #   # DDA only; requires mzML input — RAW/d datasets need prior conversion (e.g. ThermoRawFileParser)
-  #   versions:
-  #     - id: "main"
-  #       source_dir: /home/robbe/bin/sage
-  #       binary: /home/robbe/bin/sage/target/release/sage
-  #       git_tag: ""     # optional: pin a release tag, e.g. "v0.14.7"
-  #       enabled: true
-  #   datasets:
-  #     # NOTE: Sage needs mzML; listed datasets are RAW format and will fail preflight
-  #     # until converted. Add mzML-format DDA datasets here once available.
-  #     - HYE_DDA_Orbitrap
-  #     - HYE_DDA_Astral
-  #   extra:
-  #     write_pin: true
-  #     parquet: false
+  sage:
+    # DDA only; requires mzML input — RAW/d datasets need prior conversion (e.g. ThermoRawFileParser)
+    versions:
+      - id: "main"
+        source_dir: /home/robbe/bin/sage
+        binary: /home/robbe/bin/sage/target/release/sage
+        git_tag: ""     # optional: pin a release tag, e.g. "v0.14.7"
+        enabled: false
+    datasets:
+      # NOTE: Sage needs mzML; listed datasets are RAW format and will fail preflight
+      # until converted. Add mzML-format DDA datasets here once available.
+      - HYE_DDA_Orbitrap
+      - HYE_DDA_Astral
+    extra:
+      write_pin: true
+      parquet: false
 
-  # fragpipe:
-  #   # DDA and DIA; workflow is selected automatically based on acquisition type + instrument
-  #   versions:
-  #     - id: "24.0"
-  #       dir: /home/robbe/bin/fragpipe-24.0
-  #       msfragger_jar: "/home/robbe/bin/fragpipe-24.0/tools/MSFragger-4.4/MSFragger-4.4.jar"    
-  #       enabled: true
-  #     - id: "23.0"
-  #       dir: /home/robbe/bin/fragpipe-23.0
-  #       msfragger_jar: "/home/robbe/bin/fragpipe-23.0/tools/MSFragger-4.4/MSFragger-4.4.jar"
-  #       enabled: false
-  #   datasets:
-  #     - HYE_DDA_Orbitrap
-  #     - HYE_DDA_Astral
-  #     - HYE_Astral
-  #     - HYE_diaPASEF
-  #     - HYE_Astral_Single_Cell
-  #   extra:
-  #     # Workflows selected automatically; override here only if you want to force a specific one
-  #     dda_workflow: LFQ-MBR                       # for DDA datasets
-  #     dia_workflow: DIA_SpecLib_Quant              # for DIA (non-PASEF) datasets
-  #     dia_pasef_workflow: DIA_SpecLib_Quant_diaPASEF  # for diaPASEF datasets (instrument: timstof)
+  fragpipe:
+    # DDA and DIA; workflow is selected automatically based on acquisition type + instrument
+    versions:
+      - id: "24.0"
+        dir: /home/robbe/bin/fragpipe-24.0
+        msfragger_jar: "/home/robbe/bin/fragpipe-24.0/tools/MSFragger-4.4/MSFragger-4.4.jar"    
+        enabled: false
+      - id: "23.0"
+        dir: /home/robbe/bin/fragpipe-23.0
+        msfragger_jar: "/home/robbe/bin/fragpipe-23.0/tools/MSFragger-4.4/MSFragger-4.4.jar"
+        enabled: false
+    datasets:
+      - HYE_DDA_Orbitrap
+      - HYE_DDA_Astral
+      - HYE_Astral
+      - HYE_diaPASEF
+      - HYE_Astral_Single_Cell
+    extra:
+      # Workflows selected automatically; override here only if you want to force a specific one
+      dda_workflow: LFQ-MBR                       # for DDA datasets
+      dia_workflow: DIA_SpecLib_Quant              # for DIA (non-PASEF) datasets
+      dia_pasef_workflow: DIA_SpecLib_Quant_diaPASEF  # for diaPASEF datasets (instrument: timstof)
 
   maxquant:
     # DDA and DIA
     versions:
       - id: "2.8.0.0"
         dir: /home/robbe/bin/MaxQuant_v2.8.0.0
-        enabled: true
+        enabled: false
       - id: "2.7.5.0"
         dir: /home/robbe/bin/MaxQuant_v2.7.5.0
-        enabled: true
+        enabled: false
     datasets:
       - HYE_DDA_Orbitrap
-      # - HYE_DDA_Astral
-      # - HYE_Astral
-      # - HYE_diaPASEF
+      - HYE_DDA_Astral
+      - HYE_Astral
+      - HYE_diaPASEF
     extra: {}
 
-  # metamorpheus:
-  #   # DDA only
-  #   versions:
-  #     - id: "latest"
-  #       dir: /home/robbe/bin/MetaMorpheus
-  #       enabled: true
-  #   datasets:
-  #     - HYE_DDA_Orbitrap
-  #     - HYE_DDA_Astral
-  #   extra: {}
+  metamorpheus:
+    # DDA only
+    versions:
+      - id: "latest"
+        dir: /home/robbe/bin/MetaMorpheus
+        enabled: false
+    datasets:
+      - HYE_DDA_Orbitrap
+      - HYE_DDA_Astral
+    extra: {}

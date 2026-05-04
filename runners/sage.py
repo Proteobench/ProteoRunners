@@ -116,6 +116,7 @@ class SageRunner(BaseRunner):
         enzyme: dict = {
             "cleave_at":       p["enzyme_cleave_at"],
             "missed_cleavages": p["missed_cleavages"],
+            "c_terminal":     p["enzyme_c_terminal"] if p.get("enzyme_c_terminal") else False,
         }
         if p.get("enzyme_restrict"):
             enzyme["restrict"] = p["enzyme_restrict"]

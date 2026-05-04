@@ -125,6 +125,17 @@ class MaxQuantRunner(BaseRunner):
                 el.text = r'>[^|]*\|(.*?)(?:\||$)'
                 dirty = True
 
+        # --- 3. set enzyme ---
+        # --create defaults to Trypsin/P regardless of --LCMSType; patch all
+        # parameterGroup enzyme lists to the configured enzyme.
+        p = self.map_params()
+        enzyme_name = p["enzyme"]
+        for enzymes_el in root.findall('.//parameterGroup/enzymes'):
+            strings = enzymes_el.findall('string')
+            if len(strings) == 1 and strings[0].text != enzyme_name:
+                strings[0].text = enzyme_name
+                dirty = True
+
         if dirty:
             tree.write(str(mqpar), encoding='unicode', xml_declaration=True)
 

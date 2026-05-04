@@ -17,12 +17,16 @@ from .base import DDA, DIA, ENZYME_MAP, MOD_REGISTRY, BaseRunner
 
 logger = logging.getLogger(__name__)
 
-# MSFragger enzyme: (dropdown_name, cut_residues, nocut_residues)
-_FP_ENZYME: dict[str, tuple[str, str, str]] = {
-    "trypsin":      ("stricttrypsin", "KR", ""),
-    "lysc":         ("Lys-C",         "K",  ""),
-    "gluc":         ("Glu-C",         "DE", ""),
-    "chymotrypsin": ("Chymotrypsin",  "FWYL", ""),
+# MSFragger enzyme: (dropdown_name, cut_residues, nocut_residues, direction)
+_FP_ENZYME: dict[str, tuple[str, str, str, str]] = {
+    "trypsin":      ("trypsin", "KR", "P", "C"),
+    "trypsin/p":    ("stricttrypsin", "KR", "", "C"),
+    "lysc":         ("lysc",         "K",  "P", "C"),
+    "gluc":         ("gluc",         "DE", "P", "C"),
+    "chymotrypsin": ("chymotrypsin",  "FLWY", "P", "C"),
+    "aspn":         ("aspn",         "D",  "", "N"),
+    "argc":         ("argc",         "R",  "P", "C"),
+    "non-specific": ("nonspecific",   "@",  "",  "C"),
 }
 
 # Fixed mod table residue order (MSFragger canonical order)
@@ -185,6 +189,7 @@ class FragPipeRunner(BaseRunner):
             "enzyme_dropdown":    enzyme_info[0],
             "enzyme_cut":         enzyme_info[1],
             "enzyme_nocut":       enzyme_info[2],
+            "enzyme_direction":   enzyme_info[3],
             "missed_cleavages":   sp.get("missed_cleavages", 2),
             "min_pep_length":     sp.get("min_peptide_length", 7),
             "max_pep_length":     sp.get("max_peptide_length", 30),
@@ -251,6 +256,7 @@ class FragPipeRunner(BaseRunner):
             "msfragger.search_enzyme_name_1":           p["enzyme_dropdown"],
             "msfragger.search_enzyme_cut_1":            p["enzyme_cut"],
             "msfragger.search_enzyme_nocut_1":          p["enzyme_nocut"],
+            "msfragger.search_enzyme_sense_1":          p["enzyme_direction"],
             "msfragger.table.fix-mods":                 _build_fix_mods_table(p["fixed_mods"]),
             "msfragger.table.var-mods":                 _build_var_mods_table(p["variable_mods"]),
             "ionquant.mbr":                             "1" if p["mbr"] else "0",

@@ -245,6 +245,7 @@ class DIANNRunner(BaseRunner):
             "--max-pr-mz",        str(int(p["max_pr_mz"])),
             "--min-fr-mz",        str(int(p["min_fr_mz"])),
             "--max-fr-mz",        str(int(p["max_fr_mz"])),
+            "--cut",              str(p["enzyme"]),
         ]
 
         cmd += self._fixed_mod_args(p["fixed_mods"])

@@ -81,20 +81,25 @@ MOD_REGISTRY: dict[str, dict[str, Any]] = {
     },
 }
 
-#TODO: incorrect. Fix!
 ENZYME_MAP = {
+    # sage_c_terminal: True = enzyme cuts C-terminally (default for trypsin, lysc, etc.)
+    #                  False = enzyme cuts N-terminally (aspn)
     "trypsin":      {"diann": "K*,R*,!*P", "alphadia": "trypsin_not_p", "sage_cleave_at": "KR", "sage_restrict": "P",
-                     "maxquant": "Trypsin", "metamorpheus": "trypsin"},
-    "trypsin/p":    {"diann": "K*,R*",  "alphadia": "trypsin/p", "sage_cleave_at": "KR", "sage_restrict": None, "maxquant": "Trypsin/P", "metamorpheus": "trypsin"},
+                     "sage_c_terminal": True, "maxquant": "Trypsin", "metamorpheus": "trypsin"},
+    "trypsin/p":    {"diann": "K*,R*",  "alphadia": "trypsin/p", "sage_cleave_at": "KR", "sage_restrict": None,
+                     "sage_c_terminal": True, "maxquant": "Trypsin/P", "metamorpheus": "trypsin (no proline rule)"},
     "lysc":         {"diann": "K*",    "alphadia": "lys-c",    "sage_cleave_at": "K",  "sage_restrict": None,
-                     "maxquant": "LysC", "metamorpheus": "Lys-C (cleave before proline)"},
+                     "sage_c_terminal": True, "maxquant": "LysC", "metamorpheus": "LysC"},
     "gluc":         {"diann": "E*",    "alphadia": "glu-c",    "sage_cleave_at": "E", "sage_restrict": None,
-                     "maxquant": "GluC", "metamorpheus": "Glu-C"},
+                     "sage_c_terminal": True, "maxquant": "GluC", "metamorpheus": "Glu-C"},
     "chymotrypsin": {"diann": "F*,Y*,W*,M*,L*,!*P", "alphadia": "chymotrypsin", "sage_cleave_at": "FWYLM", "sage_restrict": "P",
-                     "maxquant": "Chymotrypsin+", "metamorpheus": "chymotrypsin (cleave before P)"},
-    "aspn":         {"diann": "*D",    "alphadia": "asp-n",    "sage_cleave_at": "D",  "sage_restrict": None, "sage_c_terminal": True, "maxquant": "AspN", "metamorpheus": "Asp-N"},
-    "argc":         {"diann": "R*",    "alphadia": "arg-c",    "sage_cleave_at": "R",  "sage_restrict": None, "maxquant": "ArgC", "metamorpheus": "Arg-C"},
-    "non-specific": {"diann": "**",     "alphadia": "non-specific", "sage_cleave_at": "*", "sage_restrict": None, "maxquant": "unspecific", "metamorpheus": "non-specific"},
+                     "sage_c_terminal": True, "maxquant": "Chymotrypsin+", "metamorpheus": "chymotrypsin"},
+    "aspn":         {"diann": "*D",    "alphadia": "asp-n",    "sage_cleave_at": "D",  "sage_restrict": None,
+                     "sage_c_terminal": False, "maxquant": "AspN", "metamorpheus": "Asp-N"},
+    "argc":         {"diann": "R*",    "alphadia": "arg-c",    "sage_cleave_at": "R",  "sage_restrict": None,
+                     "sage_c_terminal": True, "maxquant": "ArgC", "metamorpheus": "Arg-C"},
+    "non-specific": {"diann": "**",     "alphadia": "non-specific", "sage_cleave_at": "*", "sage_restrict": None,
+                     "sage_c_terminal": True, "maxquant": "unspecific", "metamorpheus": "non-specific"},
 }
 
 

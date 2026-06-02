@@ -1,5 +1,5 @@
 global:
-  output_dir: /home/robbe/PB_output/results/MBRDIANN2.5
+  output_dir: /home/robbe/PB_output/results/Entrapment_DIA
   max_parallel_jobs: 2
   threads_per_job: 32
   dotnet: /home/robbe/.dotnet/dotnet
@@ -113,6 +113,14 @@ datasets:
     fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_MixedSpecies_HYE.fasta
     fasta_decoy: /public/local/ProteoBench/fastas/2025-04-01-decoys-ProteoBenchFASTA_DDAQuantification.fasta.fas
 
+  Entrapment_DIA:
+    path: /public/local/ProteoBench/Entrapment_DIA
+    acquisition: DIA
+    format: raw
+    instrument: Orbitrap
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_Entrapment_Human.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2026-06-01-decoys-ProteoBenchFASTA_Entrapment_Human.fasta.fas
+
 tools:
   diann:
     versions:
@@ -124,23 +132,23 @@ tools:
       - id: "2.3.0"
         binary: /home/robbe/bin/diann-2.3.0/diann-linux
         supports_dda: false
-        enabled: false
+        enabled: true
       - id: "2.2.0"
         binary: /home/robbe/bin/diann-2.2.0/diann-linux
         supports_dda: false
-        enabled: false
+        enabled: true
       - id: "2.1.0"
         binary: /home/robbe/bin/diann-2.1.0/diann-linux
         supports_dda: false
-        enabled: false
+        enabled: true
       - id: "1.9.2"
         binary: /home/robbe/bin/diann-1.9.2/diann-linux
         supports_dda: false
-        enabled: false
+        enabled: true
       - id: "1.9.1"
         binary: /home/robbe/bin/diann-1.9.1/diann-linux
         supports_dda: false
-        enabled: false
+        enabled: true
     # DIA datasets + DDA datasets (only run on DDA if version supports_dda: true)
     datasets:
       # - HYE_Astral
@@ -151,6 +159,7 @@ tools:
       # - PYE_diaPASEF
       # - HYE_DDA_Orbitrap
       # - HYE_DDA_Astral
+      - Entrapment_DIA
     extra:
       library: ""       # path to spectral library; empty = library-free mode
 
@@ -159,13 +168,14 @@ tools:
     versions:
       - id: "2.1.1"
         command: /home/robbe/.pyenv/versions/alphaida/bin/alphadia
-        enabled: false
+        enabled: true
     datasets:
-      - HYE_Astral
-      - HYE_Astral_Single_Cell
-      # - HYE_diaPASEF
-      - HYE_ZenoSWATH
+      # - HYE_Astral
+      # - HYE_Astral_Single_Cell
+      # # - HYE_diaPASEF
+      # - HYE_ZenoSWATH
       # - PYE_diaPASEF
+      - Entrapment_DIA
     extra:
       library: ""
 
@@ -179,9 +189,9 @@ tools:
         enabled: false
     datasets:
       # NOTE: Sage needs mzML; listed datasets are RAW format and will fail preflight
-      # until converted. Add mzML-format DDA datasets here once available.
-      - HYE_DDA_Orbitrap
-      - HYE_DDA_Astral
+      # # until converted. Add mzML-format DDA datasets here once available.
+      # - HYE_DDA_Orbitrap
+      # - HYE_DDA_Astral
     extra:
       write_pin: true
       parquet: false
@@ -192,17 +202,18 @@ tools:
       - id: "24.0"
         dir: /home/robbe/bin/fragpipe-24.0
         msfragger_jar: "/home/robbe/bin/fragpipe-24.0/tools/MSFragger-4.4/MSFragger-4.4.jar"    
-        enabled: false
+        enabled: true
       - id: "23.0"
         dir: /home/robbe/bin/fragpipe-23.0
         msfragger_jar: "/home/robbe/bin/fragpipe-23.0/tools/MSFragger-4.4/MSFragger-4.4.jar"
-        enabled: false
+        enabled: true
     datasets:
-      - HYE_DDA_Orbitrap
-      - HYE_DDA_Astral
-      - HYE_Astral
-      - HYE_diaPASEF
-      - HYE_Astral_Single_Cell
+      # - HYE_DDA_Orbitrap
+      # - HYE_DDA_Astral
+      # - HYE_Astral
+      # - HYE_diaPASEF
+      # - HYE_Astral_Single_Cell
+      - Entrapment_DIA
     extra:
       # Workflows selected automatically; override here only if you want to force a specific one
       dda_workflow: LFQ-MBR                       # for DDA datasets
@@ -214,15 +225,16 @@ tools:
     versions:
       - id: "2.8.0.0"
         dir: /home/robbe/bin/MaxQuant_v2.8.0.0
-        enabled: false
+        enabled: true
       - id: "2.7.5.0"
         dir: /home/robbe/bin/MaxQuant_v2.7.5.0
-        enabled: false
+        enabled: true
     datasets:
-      - HYE_DDA_Orbitrap
-      - HYE_DDA_Astral
-      - HYE_Astral
-      - HYE_diaPASEF
+      # - HYE_DDA_Orbitrap
+      # - HYE_DDA_Astral
+      # - HYE_Astral
+      # - HYE_diaPASEF
+      - Entrapment_DIA
     extra: {}
 
   metamorpheus:
@@ -232,6 +244,6 @@ tools:
         dir: /home/robbe/bin/MetaMorpheus
         enabled: false
     datasets:
-      - HYE_DDA_Orbitrap
-      - HYE_DDA_Astral
+      # - HYE_DDA_Orbitrap
+      # - HYE_DDA_Astral
     extra: {}

@@ -136,6 +136,20 @@ class MaxQuantRunner(BaseRunner):
                 strings[0].text = enzyme_name
                 dirty = True
 
+        # --- 4. set fragment mass tolerance ---
+        # msmsParamsArray contains one entry per MS2 type (FTMS, ITMS, etc.).
+        # --changeParameter cannot address nested array members, so patch them here.
+        frag_tol = str(p["fragment_tol_ppm"])
+        for msms_params_el in root.findall('.//msmsParamsArray/msmsParams'):
+            tol_el = msms_params_el.find('MatchTolerance')
+            ppm_el = msms_params_el.find('MatchToleranceInPpm')
+            if tol_el is not None and tol_el.text != frag_tol:
+                tol_el.text = frag_tol
+                dirty = True
+            if ppm_el is not None and ppm_el.text != 'True':
+                ppm_el.text = 'True'
+                dirty = True
+
         if dirty:
             tree.write(str(mqpar), encoding='unicode', xml_declaration=True)
 
@@ -171,15 +185,16 @@ class MaxQuantRunner(BaseRunner):
 
         # Override search parameters not exposed by --create.
         # Syntax for MaxQuant 2.8+: dotnet dll mqpar --changeParameter param value
+        # Note: fragment tolerance lives in msmsParamsArray (nested), which --changeParameter
+        # cannot reach; it is patched directly in the XML by _patch_mqpar above.
+        # MaxQuant confusingly names the PSM-level FDR "peptideFdr" in mqpar.xml.
         overrides = {
             "maxMissedCleavages":  str(p["missed_cleavages"]),
             "mainSearchTol":       str(p["precursor_tol_ppm"]),
-            "msmsToleranceInPpm":  str(p["fragment_tol_ppm"]),
-            "psmFdr":              str(p["fdr_psm"]),
-            "peptideFdr":          str(p["fdr_peptide"]),
+            "peptideFdr":          str(p["fdr_psm"]),
             "proteinFdr":          str(p["fdr_protein"]),
             "matchBetweenRuns":    str(p["mbr"]).lower(),
-            "maxModifications":    str(p["max_mods"]),
+            "maxNmods":            str(p["max_mods"]),
             "minPeptideLength":    str(p["min_peptide_length"]),
         }
         for param, value in overrides.items():

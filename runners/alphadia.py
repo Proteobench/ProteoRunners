@@ -111,11 +111,16 @@ class AlphaDIARunner(BaseRunner):
                 "ms1_tolerance": p["precursor_tol"],
                 "ms2_tolerance": p["fragment_tol"],
             },
-            "fdr": {"fdr": p["fdr_psm"]},
+            # target_ms1/ms2_tolerance: final search tolerances that AlphaDIA logs and
+            # ProteoBench reads back (CONFIG_KEY_MAPPER). Set explicitly so calibration
+            # does not override the benchmark value.
             "search": {
+                "target_ms1_tolerance": p["precursor_tol"],
+                "target_ms2_tolerance": p["fragment_tol"],
                 # Rust backend does not support Bruker .d format; fall back to Python.
                 "extraction_backend": "python" if self.dataset_cfg.get("format") == "d" else "rust",
             },
+            "fdr": {"fdr": p["fdr_psm"]},
         }
 
         cfg = {k: v for k, v in cfg.items() if v is not None}

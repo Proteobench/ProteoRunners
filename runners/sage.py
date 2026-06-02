@@ -94,6 +94,8 @@ class SageRunner(BaseRunner):
         return {
             "enzyme_cleave_at":   enzyme_info["sage_cleave_at"],
             "enzyme_restrict":    enzyme_info.get("sage_restrict"),
+            # sage_c_terminal: True = C-terminal cleavage (trypsin, lysc, …); False = N-terminal (aspn)
+            "enzyme_c_terminal":  enzyme_info.get("sage_c_terminal", True),
             "missed_cleavages":   sp.get("missed_cleavages", 2),
             "min_len":            sp.get("min_peptide_length", 7),
             "max_len":            sp.get("max_peptide_length", 30),
@@ -113,10 +115,14 @@ class SageRunner(BaseRunner):
         p = self.map_params()
         threads = self.global_cfg.get("threads_per_job", 16)
 
+        # min_len/max_len and c_terminal belong inside the enzyme sub-dict; this is
+        # what Sage's config format requires and what ProteoBench reads back.
         enzyme: dict = {
-            "cleave_at":       p["enzyme_cleave_at"],
+            "cleave_at":        p["enzyme_cleave_at"],
             "missed_cleavages": p["missed_cleavages"],
-            "c_terminal":     p["enzyme_c_terminal"] if p.get("enzyme_c_terminal") else False,
+            "min_len":          p["min_len"],
+            "max_len":          p["max_len"],
+            "c_terminal":       p["enzyme_c_terminal"],
         }
         if p.get("enzyme_restrict"):
             enzyme["restrict"] = p["enzyme_restrict"]
@@ -125,8 +131,6 @@ class SageRunner(BaseRunner):
             "database": {
                 "fasta":              str(fasta),
                 "enzyme":             enzyme,
-                "peptide_min_len":    p["min_len"],
-                "peptide_max_len":    p["max_len"],
                 "fragment_min_mz":    p["fragment_min_mz"],
                 "fragment_max_mz":    p["fragment_max_mz"],
                 "static_mods":        p["static_mods"],

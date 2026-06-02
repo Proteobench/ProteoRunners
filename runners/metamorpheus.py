@@ -74,6 +74,7 @@ class MetaMorpheusRunner(BaseRunner):
             "max_mods":           sp.get("max_mods_per_peptide", 3),
             "fdr":                sp.get("fdr_psm", 0.01),
             "mbr":                sp.get("match_between_runs", False),
+            "min_charge":         sp.get("min_charge", 1),
             "max_charge":         sp.get("max_charge", 4),
             "threads":            self.global_cfg.get("threads_per_job", 16),
         }
@@ -112,7 +113,6 @@ ListOfModsFixed = "{p['fixed_mods']}"
 ListOfModsVariable = "{p['var_mods']}"
 DoPrecursorDeconvolution = true
 UseProvidedPrecursorInfo = true
-DeconvolutionMaxAssumedChargeState = {p['max_charge']}
 TotalPartitions = 1
 ProductMassTolerance = "±{p['fragment_tol_ppm']:.4f} PPM"
 PrecursorMassTolerance = "±{p['precursor_tol_ppm']:.4f} PPM"
@@ -121,6 +121,10 @@ PepQValueThreshold = 1.0
 ReportAllAmbiguity = true
 TrimMs1Peaks = false
 TrimMsMsPeaks = true
+
+[CommonParameters.PrecursorDeconvolutionParameters]
+MinAssumedChargeState = {p['min_charge']}
+MaxAssumedChargeState = {p['max_charge']}
 
 [CommonParameters.DigestionParams]
 MaxMissedCleavages = {p['missed_cleavages']}

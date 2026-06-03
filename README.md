@@ -30,11 +30,11 @@ cargo --version        # needed for Sage
 ### Step 1 — Install Python dependencies
 
 ```bash
-# Option A: conda (recommended)
+# Option A: conda 
 conda env create -f environment.yml
 conda activate proteobench-pipeline
 
-# Option B: pip
+# Option B: pip (recommended)
 pip install -r requirements.txt
 ```
 

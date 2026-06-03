@@ -151,7 +151,11 @@ class DIANNRunner(BaseRunner):
 
         binary = Path(self.version_cfg["binary"])
         if not binary.exists():
-            errors.append(f"DIA-NN binary not found: {binary}")
+            errors.append(
+                f"DIA-NN binary not found: {binary}. "
+                f"Check 'binary:' under tools > diann > versions > id: {self.version_id} in config.yaml. "
+                "Run: python setup.py --download-diann   to download automatically."
+            )
             return errors
         smoke_err = _smoke_test_binary(str(binary))
         if smoke_err:

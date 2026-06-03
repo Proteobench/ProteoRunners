@@ -48,7 +48,11 @@ class MaxQuantRunner(BaseRunner):
     def preflight_check(self) -> list[str]:
         errors = super().preflight_check()
         if not self._cmd_dll().exists():
-            errors.append(f"MaxQuantCmd.dll not found: {self._cmd_dll()}")
+            errors.append(
+                f"MaxQuantCmd.dll not found: {self._cmd_dll()}. "
+                f"Check 'dir:' under tools > maxquant > versions > id: {self.version_id} in config.yaml. "
+                "Download MaxQuant from https://www.maxquant.org/ and extract the zip."
+            )
         return errors
 
     def map_params(self) -> dict:

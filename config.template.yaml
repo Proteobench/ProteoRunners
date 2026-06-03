@@ -1,0 +1,387 @@
+# =============================================================================
+# ProteoBench Pipeline Configuration Template
+# =============================================================================
+#
+# HOW TO USE THIS FILE
+# --------------------
+# 1. Copy this file: cp config.template.yaml config.yaml
+# 2. Replace every CHANGE_ME with a path on your system.
+# 3. Enable the tools you have installed (set enabled: true).
+# 4. Run: python run_proteobench.py --dry-run   to verify before executing.
+#
+# All paths can be absolute (/full/path) or relative to the directory where
+# you run the script. Absolute paths are recommended to avoid surprises.
+#
+# Run python run_proteobench.py --list-tools    to see which tools are enabled.
+# Run python run_proteobench.py --list-datasets to see configured datasets.
+# =============================================================================
+
+global:
+  # Where all result subdirectories will be created. The pipeline creates one
+  # sub-folder per dataset and one per tool+version inside that.
+  # e.g. /home/robbe/PB_output/results/Entrapment_DIA
+  output_dir: CHANGE_ME/results
+
+  # How many tool runs to execute simultaneously. Each run uses threads_per_job
+  # threads, so total CPU load = max_parallel_jobs × threads_per_job.
+  # Do not set this higher than (available_cores / threads_per_job).
+  max_parallel_jobs: 2
+
+  # Number of CPU threads given to each individual tool run.
+  threads_per_job: 32
+
+  # Path to the .NET runtime executable. Required only for MaxQuant and
+  # MetaMorpheus. If dotnet is on your PATH, just write "dotnet".
+  # e.g. /home/robbe/.dotnet/dotnet
+  dotnet: CHANGE_ME/.dotnet/dotnet
+
+  # Python interpreter used internally by some tools (e.g. AlphaDIA's
+  # extraction backend). Usually /usr/bin/python3 or the venv python.
+  python: /usr/bin/python3
+
+  # Set to true to re-run jobs that already completed successfully.
+  # By default the pipeline writes a .done marker after each successful run
+  # and skips that job in future runs (useful for resuming after interruption).
+  overwrite: false
+
+
+# =============================================================================
+# Search parameters — unified across all tools
+# =============================================================================
+# These values are translated to tool-specific syntax by each runner.
+# Tools that do not support a particular parameter ignore it silently.
+
+search_params:
+
+  # Enzyme used for in-silico digestion.
+  # Supported values: trypsin | trypsin/p | lysc | gluc | aspn | argc |
+  #                   chymotrypsin | non-specific
+  # "trypsin/p" = trypsin allowing cleavage before proline (less stringent).
+  enzyme: trypsin/p
+
+  # Maximum number of missed cleavage sites per peptide.
+  missed_cleavages: 1
+
+  # Peptide length range (number of amino acid residues).
+  min_peptide_length: 6
+  max_peptide_length: 30
+
+  # Precursor (MS1) and fragment (MS2) mass tolerance in parts per million.
+  # 10 ppm is a safe default for Orbitrap data; Astral data can often use 5 ppm.
+  precursor_mass_tolerance_ppm: 10
+  fragment_mass_tolerance_ppm: 10
+
+  # Precursor charge state range to consider.
+  min_charge: 2
+  max_charge: 4
+
+  # Precursor and fragment m/z windows (Dalton). Peaks outside these limits
+  # are ignored. Adjust for your acquisition window.
+  precursor_mz_range: [400.0, 1200.0]   # [min, max] in Da
+  fragment_mz_range:  [200.0, 2000.0]   # [min, max] in Da
+
+  # Modifications — use MaxQuant naming convention.
+  # Currently supported: Carbamidomethyl (C) | Oxidation (M) | Phospho (STY) |
+  #                       Acetyl (Protein N-term) | Deamidation (NQ)
+  fixed_mods:
+    - Carbamidomethyl (C)      # Alkylation of cysteine — usually fixed
+  variable_mods:
+    - Oxidation (M)            # Methionine oxidation — usually variable
+  max_mods_per_peptide: 1      # Maximum variable modifications per peptide
+
+  # FDR thresholds (decimal fraction; 0.01 = 1%).
+  fdr_psm:     0.01   # PSM / precursor level FDR
+  fdr_peptide: 0.01   # Unique peptide level FDR (ignored by tools without separate peptide FDR)
+  fdr_protein: 0.01   # Protein group level FDR
+
+  # Match-between-runs (MBR) — transfer identifications across runs using
+  # retention time alignment. Requires multiple files in the same dataset.
+  match_between_runs: true
+
+
+# =============================================================================
+# Datasets
+# =============================================================================
+# Each entry defines one MS dataset. The tool sections below reference these
+# entries by name to select which datasets each tool should run on.
+#
+# Required keys per dataset:
+#   path        — directory containing the raw MS files
+#   acquisition — DDA (data-dependent) or DIA (data-independent)
+#   format      — file format: raw | mzml | d | wiff | mgf
+#   instrument  — instrument type (informational); used by FragPipe to pick workflow
+#   fasta       — protein sequence database (FASTA format)
+#
+# Optional:
+#   fasta_decoy — pre-built decoy FASTA. Required by FragPipe; other tools
+#                 generate decoys internally and do not need this.
+
+datasets:
+
+  HYE_DDA_Orbitrap:
+    path: /public/local/ProteoBench/HYE_DDA_Orbitrap   # CHANGE_ME if not on shared storage
+    acquisition: DDA
+    format: raw
+    instrument: Orbitrap
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_MixedSpecies_HYE.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2025-04-01-decoys-ProteoBenchFASTA_DDAQuantification.fasta.fas
+
+  HYE_DDA_Astral:
+    path: /public/local/ProteoBench/HYE_DDA_Astral
+    acquisition: DDA
+    format: raw
+    instrument: Astral
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_MixedSpecies_HYE.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2025-04-01-decoys-ProteoBenchFASTA_DDAQuantification.fasta.fas
+
+  HYE_Astral:
+    path: /public/local/ProteoBench/HYE_Astral
+    acquisition: DIA
+    format: raw
+    instrument: Astral
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_MixedSpecies_HYE.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2025-04-01-decoys-ProteoBenchFASTA_DDAQuantification.fasta.fas
+
+  HYE_Astral_mzml:
+    path: /public/local/ProteoBench/HYE_Astral_mzml
+    acquisition: DIA
+    format: mzml
+    instrument: Astral
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_MixedSpecies_HYE.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2025-04-01-decoys-ProteoBenchFASTA_DDAQuantification.fasta.fas
+
+  HYE_Astral_Single_Cell:
+    path: /public/local/ProteoBench/HYE_Astral_Single_Cell
+    acquisition: DIA
+    format: raw
+    instrument: Astral
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_DDAQuantification_noecoli.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2026-04-26-decoys-ProteoBenchFASTA_DDAQuantification_noecoli.fasta.fas
+
+  HYE_AIF:
+    path: /public/local/ProteoBench/HYE_AIF
+    acquisition: DIA
+    format: raw
+    instrument: Orbitrap
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_MixedSpecies_HYE.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2025-04-01-decoys-ProteoBenchFASTA_DDAQuantification.fasta.fas
+
+  HYE_diaPASEF:
+    path: /public/local/ProteoBench/HYE_diaPASEF
+    acquisition: DIA
+    format: d       # Bruker .d directory format (timsTOF)
+    instrument: timstof
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_MixedSpecies_HYE.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2025-04-01-decoys-ProteoBenchFASTA_DDAQuantification.fasta.fas
+
+  HYE_ZenoSWATH:
+    path: /public/local/ProteoBench/HYE_ZenoSWATH
+    acquisition: DIA
+    format: wiff    # SCIEX .wiff format (ZenoTOF)
+    instrument: ZenoTOF
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_MixedSpecies_HYE.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2025-04-01-decoys-ProteoBenchFASTA_DDAQuantification.fasta.fas
+
+  PYE_diaPASEF:
+    path: /public/local/ProteoBench/PYE_diaPASEF
+    acquisition: DIA
+    format: d
+    instrument: timstof
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_MixedSpecies_HYE.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2025-04-01-decoys-ProteoBenchFASTA_DDAQuantification.fasta.fas
+
+  Entrapment_DIA:
+    path: /public/local/ProteoBench/Entrapment_DIA
+    acquisition: DIA
+    format: raw
+    instrument: Orbitrap
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_Entrapment_Human.fasta
+    fasta_decoy: /public/local/ProteoBench/fastas/2026-06-01-decoys-ProteoBenchFASTA_Entrapment_Human.fasta.fas
+
+
+# =============================================================================
+# Tools
+# =============================================================================
+# Each tool section lists:
+#   versions — one entry per installed version; set enabled: false to skip
+#   datasets — which datasets (by name) this tool should run on
+#   extra    — tool-specific options not covered by search_params
+#
+# Only enabled versions are run. Disabling a version is safe — it keeps the
+# configuration for future use without executing the tool.
+#
+# To add a new tool version, copy an existing version block, change the id
+# and binary/dir path, and set enabled: true.
+
+tools:
+
+  # ---------------------------------------------------------------------------
+  # DIA-NN — supports both DDA (v2.1+) and DIA
+  # Download: https://github.com/vdemichev/DiaNN/releases
+  # Install:  download the Linux binary, make it executable (chmod +x)
+  # Or run:   python setup.py --download-diann
+  # ---------------------------------------------------------------------------
+  diann:
+    versions:
+      # supports_dda: true from version 2.1.0 onward; older versions are DIA-only
+      - id: "2.5.0"
+        binary: CHANGE_ME/bin/diann-2.5.0/diann-linux  # e.g. /home/robbe/bin/diann-2.5.0/diann-linux
+        supports_dda: true
+        enabled: false   # set to true once binary is in place
+
+      - id: "2.3.0"
+        binary: CHANGE_ME/bin/diann-2.3.0/diann-linux
+        supports_dda: false
+        enabled: false
+
+      - id: "2.2.0"
+        binary: CHANGE_ME/bin/diann-2.2.0/diann-linux
+        supports_dda: false
+        enabled: false
+
+      - id: "2.1.0"
+        binary: CHANGE_ME/bin/diann-2.1.0/diann-linux
+        supports_dda: false
+        enabled: false
+
+      - id: "1.9.2"
+        binary: CHANGE_ME/bin/diann-1.9.2/diann-linux
+        supports_dda: false
+        enabled: false
+
+      - id: "1.9.1"
+        binary: CHANGE_ME/bin/diann-1.9.1/diann-linux
+        supports_dda: false
+        enabled: false
+
+    # List dataset names from the datasets section above that DIA-NN should run on.
+    # DDA datasets are automatically skipped for versions where supports_dda: false.
+    datasets:
+      - Entrapment_DIA
+      # - HYE_Astral
+      # - HYE_Astral_Single_Cell
+      # - HYE_diaPASEF
+      # - HYE_DDA_Orbitrap    # requires supports_dda: true version
+
+    extra:
+      # Path to a pre-built spectral library (.tsv/.speclib/.predicted.speclib).
+      # Leave empty for library-free mode (DIA-NN generates its own library).
+      library: ""
+
+  # ---------------------------------------------------------------------------
+  # AlphaDIA — DIA only
+  # Install: pip install alphadia   (in your Python environment)
+  # After install, find the binary: which alphadia
+  # ---------------------------------------------------------------------------
+  alphadia:
+    versions:
+      - id: "2.1.1"
+        # Run "which alphadia" after pip install to get the correct path
+        command: CHANGE_ME/.pyenv/versions/alphadia/bin/alphadia  # e.g. /home/robbe/.pyenv/versions/alphaida/bin/alphadia
+        enabled: false
+
+    datasets:
+      - Entrapment_DIA
+      # - HYE_Astral
+      # - HYE_Astral_Single_Cell
+
+    extra:
+      library: ""
+
+  # ---------------------------------------------------------------------------
+  # Sage — DDA only; requires mzML input (not raw/d/wiff)
+  # Install: requires Rust/cargo. Run: python setup.py --sage-only
+  # For mzML conversion of Thermo raw files use ThermoRawFileParser.
+  # ---------------------------------------------------------------------------
+  sage:
+    versions:
+      - id: "main"
+        source_dir: CHANGE_ME/bin/sage   # Git repository directory, e.g. /home/robbe/bin/sage
+        binary: CHANGE_ME/bin/sage/target/release/sage   # compiled binary (built by setup.py)
+        git_tag: ""   # pin a release tag, e.g. "v0.14.7"; leave empty for HEAD
+        enabled: false
+
+    # Sage requires mzML format. Add mzML DDA datasets here once available.
+    datasets: []
+    # datasets:
+    #   - HYE_DDA_Orbitrap    # only works if format: mzml
+
+    extra:
+      write_pin: true    # write Percolator PIN file alongside results
+      parquet: false     # write results in Parquet format instead of TSV
+
+  # ---------------------------------------------------------------------------
+  # FragPipe — supports DDA and DIA
+  # Install: download from https://github.com/Nesvilab/FragPipe/releases
+  #          (get the .zip, extract to a directory)
+  # Then run: python setup.py --accept-license   to download MSFragger/IonQuant/DiaTracer
+  # Requires Java 11+: apt install default-jre   OR  conda install -c conda-forge openjdk
+  # ---------------------------------------------------------------------------
+  fragpipe:
+    versions:
+      - id: "24.0"
+        dir: CHANGE_ME/bin/fragpipe-24.0   # e.g. /home/robbe/bin/fragpipe-24.0
+        # Filled automatically by setup.py --accept-license; or set manually after download
+        msfragger_jar: ""   # e.g. /home/robbe/bin/fragpipe-24.0/tools/MSFragger-4.4/MSFragger-4.4.jar
+        enabled: false
+
+      - id: "23.0"
+        dir: CHANGE_ME/bin/fragpipe-23.0
+        msfragger_jar: ""
+        enabled: false
+
+    datasets:
+      - Entrapment_DIA
+      # - HYE_Astral
+      # - HYE_diaPASEF
+      # - HYE_DDA_Orbitrap
+
+    extra:
+      # FragPipe workflows are selected automatically based on acquisition type and instrument.
+      # Override here only if you want to force a specific workflow file.
+      dda_workflow:       LFQ-MBR                        # used for DDA datasets
+      dia_workflow:       DIA_SpecLib_Quant               # used for DIA (non-PASEF) datasets
+      dia_pasef_workflow: DIA_SpecLib_Quant_diaPASEF      # used for diaPASEF (instrument: timstof)
+
+  # ---------------------------------------------------------------------------
+  # MaxQuant — supports DDA and DIA
+  # Install: download from https://www.maxquant.org/ (free academic)
+  #          extract zip to a directory, no further installation needed
+  # Requires .NET 8: apt install dotnet-runtime-8.0
+  #                  OR: winget install Microsoft.DotNet.Runtime.8
+  # ---------------------------------------------------------------------------
+  maxquant:
+    versions:
+      - id: "2.8.0.0"
+        dir: CHANGE_ME/bin/MaxQuant_v2.8.0.0   # directory containing bin/MaxQuantCmd.dll
+        enabled: false
+
+      - id: "2.7.5.0"
+        dir: CHANGE_ME/bin/MaxQuant_v2.7.5.0
+        enabled: false
+
+    datasets:
+      - Entrapment_DIA
+      # - HYE_DDA_Orbitrap
+      # - HYE_Astral
+
+    extra: {}
+
+  # ---------------------------------------------------------------------------
+  # MetaMorpheus — DDA only
+  # Install: download from https://github.com/smith-chem-wisc/MetaMorpheus/releases
+  #          extract to a directory
+  # Requires .NET 8 (same as MaxQuant above)
+  # ---------------------------------------------------------------------------
+  metamorpheus:
+    versions:
+      - id: "latest"
+        dir: CHANGE_ME/bin/MetaMorpheus   # directory containing CMD.dll
+        enabled: false
+
+    # MetaMorpheus is DDA-only; add DDA datasets here
+    datasets: []
+    # datasets:
+    #   - HYE_DDA_Orbitrap
+
+    extra: {}

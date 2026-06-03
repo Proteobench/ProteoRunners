@@ -33,7 +33,18 @@ class AlphaDIARunner(BaseRunner):
         import subprocess
         cmd = self.version_cfg.get("command", "alphadia")
         if not (shutil.which(cmd) or Path(cmd).exists()):
-            errors.append(f"alphaDIA command not found: {cmd}")
+            found = shutil.which("alphadia")
+            if found:
+                errors.append(
+                    f"alphaDIA command not found at {cmd!r}. "
+                    f"Found 'alphadia' on PATH at {found} — update 'command:' under "
+                    f"tools > alphadia > versions > id: {self.version_id} in config.yaml."
+                )
+            else:
+                errors.append(
+                    f"alphaDIA command not found: {cmd}. "
+                    "Install with: pip install alphadia   then run: which alphadia"
+                )
             return errors
         # Pre-download peptdeep models so parallel jobs don't race on the same cache file.
         python = str(Path(cmd).parent / "python")

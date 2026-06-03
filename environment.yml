@@ -1,0 +1,9 @@
+name: proteobench-pipeline
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.11
+  - pyyaml
+  - pip:
+      - rich>=13.0

@@ -144,7 +144,11 @@ class FragPipeRunner(BaseRunner):
             errors.append(f"fasta_decoy not found: {fasta_decoy}")
         fp_dir = Path(self.version_cfg["dir"])
         if not fp_dir.exists():
-            errors.append(f"FragPipe directory not found: {fp_dir}")
+            errors.append(
+                f"FragPipe directory not found: {fp_dir}. "
+                f"Check 'dir:' under tools > fragpipe > versions > id: {self.version_id} in config.yaml. "
+                "Download FragPipe from https://github.com/Nesvilab/FragPipe/releases"
+            )
             return errors
 
         launcher = fp_dir / "bin" / "fragpipe"

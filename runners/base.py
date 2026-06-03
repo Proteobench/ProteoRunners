@@ -168,12 +168,24 @@ class BaseRunner(ABC):
 
         dataset_path = Path(self.dataset_cfg["path"])
         if not dataset_path.exists():
-            errors.append(f"Dataset path not found: {dataset_path}")
+            errors.append(
+                f"Dataset path not found: {dataset_path}. "
+                f"Check 'path:' under datasets > {self.dataset_name} in config.yaml "
+                "(is the data directory mounted?)"
+            )
         fasta = Path(self.dataset_cfg["fasta"])
         if not fasta.exists():
-            errors.append(f"FASTA not found: {fasta}")
+            errors.append(
+                f"FASTA file not found: {fasta}. "
+                f"Check 'fasta:' under datasets > {self.dataset_name} in config.yaml."
+            )
         if not self.get_input_files():
-            errors.append(f"No input MS files found in {dataset_path}")
+            fmt = self.dataset_cfg.get("format", "?")
+            errors.append(
+                f"No {fmt!r} files found in {dataset_path}. "
+                "Verify that MS data files are present and that 'format:' matches "
+                "the actual file type (raw / mzml / d / wiff / mgf)."
+            )
         return errors
 
     def get_input_files(self) -> list[Path]:
@@ -277,7 +289,7 @@ class BaseRunner(ABC):
                 )
             runtime = time.monotonic() - t0
             success = proc.returncode == 0
-            error_msg = "" if success else f"exit code {proc.returncode}"
+            error_msg = "" if success else f"exit code {proc.returncode} — check log: {stderr_log}"
         except Exception as exc:
             runtime = time.monotonic() - t0
             success = False

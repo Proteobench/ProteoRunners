@@ -1,15 +1,30 @@
 #!/usr/bin/env python3
 """One-time setup: compile Sage from source and download tool binaries.
 
+License summary
+---------------
+Tool            License                    Prompt required
+-----------     --------------------------  ---------------
+Sage            MIT (open source)           no
+AlphaDIA        Apache 2.0 (open source)    no
+MetaMorpheus    MIT (open source)           no
+DIA-NN          Proprietary (Academia free) notice shown
+MSFragger       Nesvilab Academic           --accept-license
+IonQuant        Nesvilab Academic           --accept-license
+DiaTracer       Nesvilab Academic           --accept-license
+MaxQuant        Proprietary (Max Planck)    manual download only
+
 Usage (interactive — recommended for first-time users):
-    python setup.py                         # guided setup, prompts for license
+    python setup.py                         # guided setup, prompts for licenses
 
 Usage (non-interactive / CI):
     python setup.py --accept-license        # all tasks (Sage + MSFragger + IonQuant + DiaTracer + DIA-NN)
     python setup.py --sage-only             # compile Sage only
-    python setup.py --msfragger-only --accept-license
-    python setup.py --ionquant-only --accept-license
-    python setup.py --diatracer-only        # DiaTracer (free, no license)
+    python setup.py --alphadia-only         # pip-install AlphaDIA into configured venv
+    python setup.py --metamorpheus-only     # download latest MetaMorpheus release
+    python setup.py --msfragger-only --accept-license   # downloads FragPipe bundle (includes MSFragger)
+    python setup.py --ionquant-only --accept-license    # checks IonQuant present in FragPipe bundle
+    python setup.py --diatracer-only --accept-license
     python setup.py --download-diann        # download latest DIA-NN Linux binary
 
 Status check:
@@ -35,24 +50,40 @@ SCRIPT_DIR = Path(__file__).parent
 DEFAULT_CONFIG = SCRIPT_DIR / "config.yaml"
 
 MSFRAGGER_LICENSE_URL = "https://msfragger.nesvilab.org/upgrading_msfragger.html"
-MSFRAGGER_API_URL = "https://api.github.com/repos/Nesvilab/MSFragger/releases/latest"
-MSFRAGGER_INSTALL_DIR = Path("/home/robbe/bin/MSFragger")
+# MSFragger and IonQuant have no public GitHub releases; both ship inside the FragPipe bundle.
+FRAGPIPE_API_URL = "https://api.github.com/repos/Nesvilab/FragPipe/releases/latest"
+# DiaTracer (like MSFragger and IonQuant) ships inside the FragPipe bundle; no separate releases.
+DIANN_API_URL = "https://api.github.com/repos/vdemichev/DiaNN/releases?per_page=100"
+METAMORPHEUS_API_URL = "https://api.github.com/repos/smith-chem-wisc/MetaMorpheus/releases/latest"
 
-IONQUANT_API_URL = "https://api.github.com/repos/Nesvilab/IonQuant/releases/latest"
-DIATRACER_API_URL = "https://api.github.com/repos/Nesvilab/diaTracer/releases"
-DIANN_API_URL = "https://api.github.com/repos/vdemichev/DiaNN/releases/latest"
-
-MSFRAGGER_LICENSE_TEXT = """\
+# MSFragger, IonQuant, and DiaTracer all share the Nesvilab Academic License.
+# Commercial use of any of these tools requires a separate license from Fragmatics
+# (https://fragmatics.com). Accept once for all three.
+NESVILAB_LICENSE_TEXT = """\
 ============================================================
-  MSFragger Academic License
+  Nesvilab Academic License (MSFragger, IonQuant, DiaTracer)
 ============================================================
-MSFragger is freely available for academic research use.
-Commercial use requires a license from the University of Michigan.
+MSFragger, IonQuant, and DiaTracer are freely available for
+non-commercial academic and non-profit research.
+Commercial use requires a license from Fragmatics (https://fragmatics.com).
 
 By accepting you confirm that you:
-  1. Are using MSFragger for non-commercial academic research.
-  2. Have read and agree to the MSFragger license at:
+  1. Are using these tools for non-commercial academic research.
+  2. Have read and agree to the terms at:
      https://msfragger.nesvilab.org/upgrading_msfragger.html
+============================================================
+"""
+
+DIANN_NOTICE_TEXT = """\
+============================================================
+  DIA-NN License Notice
+============================================================
+DIA-NN is available free of charge for non-commercial academic
+research (Academia tier). A commercial Enterprise license is
+required for commercial applications.
+
+Please review the current license terms before use:
+  https://github.com/vdemichev/DiaNN
 ============================================================
 """
 
@@ -88,10 +119,10 @@ def save_config(cfg: dict, path: Path) -> None:
 
 
 def _ask_license() -> bool:
-    """Show MSFragger license and ask interactively. Returns True if accepted."""
-    print(MSFRAGGER_LICENSE_TEXT)
+    """Show Nesvilab license and ask interactively. Returns True if accepted."""
+    print(NESVILAB_LICENSE_TEXT)
     try:
-        answer = input("Do you accept the MSFragger academic license? [y/N]: ").strip().lower()
+        answer = input("Do you accept the Nesvilab academic license? [y/N]: ").strip().lower()
         return answer in ("y", "yes")
     except EOFError:
         return False
@@ -172,7 +203,19 @@ def check_setup(cfg: dict) -> bool:
             f"DiaTracer ({ver_id})",
             bool(dt_jars),
             str(dt_jars[0]) if dt_jars else f"not found in {tools_dir}",
-            "Run: python setup.py --diatracer-only" if not dt_jars else "",
+            "Run: python setup.py --accept-license --diatracer-only" if not dt_jars else "",
+        )
+
+    # AlphaDIA
+    for ver in cfg.get("tools", {}).get("alphadia", {}).get("versions", []):
+        cmd = ver.get("command", "")
+        ver_id = ver.get("id", "?")
+        found = bool(cmd) and Path(cmd).exists()
+        _row(
+            f"AlphaDIA ({ver_id})",
+            found,
+            cmd if found else (cmd or "not configured"),
+            "Run: python setup.py --alphadia-only" if not found else "",
         )
 
     # DIA-NN versions
@@ -229,13 +272,11 @@ def compile_sage(cfg: dict) -> bool:
         git_tag = version.get("git_tag", "")
 
         if not source_dir.exists():
-            logger.error("Sage source_dir not found: %s", source_dir)
-            logger.error(
-                "Set 'source_dir:' under tools > sage > versions in config.yaml "
-                "to the path of the Sage git repository. "
-                "Clone with: git clone https://github.com/lazear/sage.git %s", source_dir
-            )
-            return False
+            logger.info("Sage source_dir not found; cloning https://github.com/lazear/sage.git → %s", source_dir)
+            r = subprocess.run(["git", "clone", "https://github.com/lazear/sage.git", str(source_dir)])
+            if r.returncode != 0:
+                logger.error("git clone failed. Check network access or set 'source_dir:' manually.")
+                return False
 
         if binary.exists():
             logger.info("Sage binary already found at %s — skipping compilation.", binary)
@@ -270,273 +311,422 @@ def compile_sage(cfg: dict) -> bool:
     return False
 
 
-# ── MSFragger download ────────────────────────────────────────────────────────
+# ── FragPipe bundle download (MSFragger + IonQuant ship inside FragPipe) ──────
 
-def _get_latest_msfragger_release() -> tuple[str, str]:
+def _get_fragpipe_linux_bundle() -> tuple[str, str]:
+    """Return (tag, download_url) for the latest FragPipe Linux zip bundle."""
     import json
-    req = urllib.request.Request(MSFRAGGER_API_URL, headers={"User-Agent": "proteobench-setup/1.0"})
+    req = urllib.request.Request(FRAGPIPE_API_URL, headers={"User-Agent": "proteobench-setup/1.0"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
     tag = data["tag_name"]
     for asset in data.get("assets", []):
-        if asset["name"].endswith(".jar") and "MSFragger" in asset["name"]:
+        if asset["name"].lower().endswith("-linux.zip"):
             return tag, asset["browser_download_url"]
-    version = tag.lstrip("v")
-    url = f"https://github.com/Nesvilab/MSFragger/releases/download/{tag}/MSFragger-{version}.jar"
-    return tag, url
+    raise RuntimeError(f"No Linux zip found in FragPipe release {tag}")
+
+
+def _extract_zip_to(zip_path: Path, dest_dir: Path) -> None:
+    """Extract zip to dest_dir, stripping a single top-level directory if present."""
+    import shutil
+    import zipfile
+    with zipfile.ZipFile(zip_path) as zf:
+        members = zf.infolist()
+        prefix = ""
+        first_name = members[0].filename if members else ""
+        if "/" in first_name:
+            candidate = first_name.split("/")[0] + "/"
+            if all(m.filename.startswith(candidate) for m in members):
+                prefix = candidate
+        for info in members:
+            rel = info.filename[len(prefix):] if prefix else info.filename
+            if not rel:
+                continue
+            target = dest_dir / rel
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(info) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+
+
+def _fragpipe_dir_populated(fp_dir: Path) -> bool:
+    return fp_dir.is_dir() and any(fp_dir.iterdir())
+
+
+def _ensure_fragpipe_bundle(version_cfgs: list[dict]) -> bool:
+    """Download and extract the FragPipe Linux bundle for any unpopulated dirs."""
+    import tempfile
+
+    needs_bundle = [v for v in version_cfgs if not _fragpipe_dir_populated(Path(v.get("dir", "")))]
+    if not needs_bundle:
+        return True
+
+    logger.info("Fetching latest FragPipe release info from GitHub ...")
+    try:
+        tag, url = _get_fragpipe_linux_bundle()
+    except Exception as exc:
+        logger.error("Could not fetch FragPipe release info: %s", exc)
+        logger.error("Download the FragPipe bundle from https://github.com/Nesvilab/FragPipe/releases")
+        return False
+
+    success = True
+    for version_cfg in needs_bundle:
+        fp_dir = Path(version_cfg.get("dir", ""))
+        if not fp_dir.parent.exists():
+            logger.error("Parent directory does not exist: %s", fp_dir.parent)
+            success = False
+            continue
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = Path(tmpdir) / f"FragPipe-{tag}-linux.zip"
+            logger.info("Downloading FragPipe %s bundle → %s ...", tag, fp_dir)
+            try:
+                urllib.request.urlretrieve(url, str(zip_path), reporthook=_progress)
+                print()
+            except Exception as exc:
+                logger.error("Download failed: %s", exc)
+                success = False
+                continue
+            fp_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Extracting FragPipe bundle ...")
+            _extract_zip_to(zip_path, fp_dir)
+
+    return success
 
 
 def download_msfragger(cfg: dict, config_path: Path) -> bool:
-    logger.info("Fetching latest MSFragger release info from GitHub ...")
-    try:
-        tag, url = _get_latest_msfragger_release()
-    except Exception as exc:
-        logger.error("Could not fetch MSFragger release info: %s", exc)
-        logger.error("Download manually from https://github.com/Nesvilab/MSFragger/releases")
+    """MSFragger ships inside the FragPipe Linux bundle; download and extract it."""
+    versions = cfg.get("tools", {}).get("fragpipe", {}).get("versions", [])
+    missing = [v for v in versions if not Path(v.get("msfragger_jar", "")).exists()]
+    if not missing:
+        logger.info("MSFragger already present in all configured FragPipe versions — skipping.")
+        return True
+
+    if not _ensure_fragpipe_bundle(missing):
         return False
 
-    version = tag.lstrip("v")
-    MSFRAGGER_INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-    jar_path = MSFRAGGER_INSTALL_DIR / f"MSFragger-{version}.jar"
-
-    if jar_path.exists():
-        logger.info("MSFragger JAR already present: %s — skipping download.", jar_path)
-    else:
-        logger.info("Downloading MSFragger %s from %s ...", version, url)
-        try:
-            urllib.request.urlretrieve(url, str(jar_path), reporthook=_progress)
-            print()
-        except Exception as exc:
-            logger.error("Download failed: %s", exc)
-            return False
-        logger.info("Downloaded: %s", jar_path)
-
     modified = False
-    for version_cfg in cfg.get("tools", {}).get("fragpipe", {}).get("versions", []):
-        if not version_cfg.get("msfragger_jar"):
-            version_cfg["msfragger_jar"] = str(jar_path)
-            version_cfg["enabled"] = True
-            modified = True
+    success = True
+    for version_cfg in missing:
+        fp_dir = Path(version_cfg.get("dir", ""))
+        jars = sorted(fp_dir.rglob("MSFragger*.jar"))
+        if not jars:
+            logger.error("MSFragger jar not found in %s after extraction", fp_dir)
+            success = False
+            continue
+        jar_path = jars[-1]
+        version_cfg["msfragger_jar"] = str(jar_path)
+        version_cfg["enabled"] = True
+        modified = True
+        logger.info("MSFragger jar: %s", jar_path)
 
     if modified:
         save_config(cfg, config_path)
-        logger.info("Updated config.yaml: fragpipe.versions[*].msfragger_jar and enabled=true")
-    else:
-        logger.info("FragPipe versions already configured; config.yaml not modified.")
+        logger.info("Updated config.yaml with MSFragger jar paths.")
 
-    return True
+    return success
 
 
-# ── IonQuant download ─────────────────────────────────────────────────────────
+# ── IonQuant ──────────────────────────────────────────────────────────────────
 
 def download_ionquant(cfg: dict) -> bool:
-    import json
-    logger.info("Fetching latest IonQuant release info from GitHub ...")
-    try:
-        req = urllib.request.Request(IONQUANT_API_URL, headers={"User-Agent": "proteobench-setup/1.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-    except Exception as exc:
-        logger.error("Could not fetch IonQuant release info: %s", exc)
-        logger.error("Download manually from https://github.com/Nesvilab/IonQuant/releases")
-        return False
+    """IonQuant ships inside the FragPipe bundle; download bundle if not yet extracted."""
+    versions = cfg.get("tools", {}).get("fragpipe", {}).get("versions", [])
 
-    tag = data["tag_name"]
-    version = tag.lstrip("v")
-    jar_name = f"IonQuant-{version}.jar"
-    download_url = None
-    for asset in data.get("assets", []):
-        if asset["name"].endswith(".jar") and "IonQuant" in asset["name"]:
-            download_url = asset["browser_download_url"]
-            jar_name = asset["name"]
-            break
-    if download_url is None:
-        download_url = f"https://github.com/Nesvilab/IonQuant/releases/download/{tag}/{jar_name}"
+    def _has_ionquant(v: dict) -> bool:
+        tools_dir = Path(v.get("dir", "")) / "tools"
+        return tools_dir.is_dir() and bool(sorted(tools_dir.glob("IonQuant*.jar")))
+
+    missing = [v for v in versions if not _has_ionquant(v)]
+    if missing:
+        if not _ensure_fragpipe_bundle(missing):
+            return False
 
     success = True
-    for version_cfg in cfg.get("tools", {}).get("fragpipe", {}).get("versions", []):
-        fp_dir = Path(version_cfg.get("dir", ""))
-        if not fp_dir.is_dir():
-            continue
-        tools_dir = fp_dir / "tools"
-        dest = tools_dir / jar_name
-        if dest.exists():
-            logger.info("IonQuant already present: %s — skipping.", dest)
-            continue
-        logger.info("Downloading IonQuant %s → %s ...", version, dest)
-        try:
-            urllib.request.urlretrieve(download_url, str(dest), reporthook=_progress)
-            print()
-        except Exception as exc:
-            logger.error("Download failed: %s", exc)
+    for version_cfg in versions:
+        ver_id = version_cfg.get("id", "?")
+        tools_dir = Path(version_cfg.get("dir", "")) / "tools"
+        iq_jars = sorted(tools_dir.glob("IonQuant*.jar")) if tools_dir.is_dir() else []
+        if iq_jars:
+            logger.info("IonQuant (%s): %s", ver_id, iq_jars[0])
+        else:
+            logger.warning("IonQuant jar not found in %s (version %s).", tools_dir, ver_id)
             success = False
-            continue
-        logger.info("Downloaded: %s", dest)
 
     return success
 
 
 # ── DiaTracer download ────────────────────────────────────────────────────────
 
-def _get_required_diatracer_version(fp_dir: Path) -> str | None:
-    import re
-    import subprocess as sp
-    launcher = fp_dir / "bin" / "fragpipe"
-    if not launcher.exists():
-        return None
-    try:
-        r = sp.run([str(launcher), "--headless"], capture_output=True, timeout=10,
-                   env={**os.environ, "JAVA_OPTS": "-Djava.awt.headless=true"})
-        output = r.stdout.decode(errors="replace") + r.stderr.decode(errors="replace")
-        m = re.search(r"diaTracer\s+([\d.]+)\s+is required", output)
-        if m:
-            return m.group(1)
-    except Exception:
-        pass
-    return None
-
-
 def download_diatracer(cfg: dict) -> bool:
-    import json
-    import re
-    logger.info("Fetching DiaTracer releases from GitHub ...")
-    try:
-        req = urllib.request.Request(DIATRACER_API_URL, headers={"User-Agent": "proteobench-setup/1.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            releases = json.loads(resp.read())
-    except Exception as exc:
-        logger.error("Could not fetch DiaTracer release info: %s", exc)
-        logger.error("Download manually from https://github.com/Nesvilab/diaTracer/releases")
-        return False
+    """DiaTracer ships inside the FragPipe bundle; download bundle if not yet extracted."""
+    versions = cfg.get("tools", {}).get("fragpipe", {}).get("versions", [])
 
-    def _find_asset(target_version: str | None) -> tuple[str, str] | None:
-        for release in releases:
-            tag = release["tag_name"]
-            ver = tag.lstrip("v")
-            if target_version and ver != target_version:
-                continue
-            for asset in release.get("assets", []):
-                name = asset["name"]
-                if name.endswith(".jar") and re.match(r"diatracer", name, re.IGNORECASE):
-                    return name, asset["browser_download_url"]
-            jar_name = f"diaTracer-{ver}.jar"
-            url = f"https://github.com/Nesvilab/diaTracer/releases/download/{tag}/{jar_name}"
-            return jar_name, url
-        return None
+    def _has_diatracer(v: dict) -> bool:
+        tools_dir = Path(v.get("dir", "")) / "tools"
+        return tools_dir.is_dir() and bool(
+            sorted(tools_dir.glob("diaTracer*.jar")) + sorted(tools_dir.glob("diatracer*.jar"))
+        )
+
+    missing = [v for v in versions if not _has_diatracer(v)]
+    if missing:
+        if not _ensure_fragpipe_bundle(missing):
+            return False
 
     success = True
-    for version_cfg in cfg.get("tools", {}).get("fragpipe", {}).get("versions", []):
-        fp_dir = Path(version_cfg.get("dir", ""))
-        if not fp_dir.is_dir():
-            continue
-        tools_dir = fp_dir / "tools"
-
-        required = _get_required_diatracer_version(fp_dir)
-        if required:
-            logger.info("FragPipe at %s requires diaTracer %s", fp_dir, required)
+    for version_cfg in versions:
+        ver_id = version_cfg.get("id", "?")
+        tools_dir = Path(version_cfg.get("dir", "")) / "tools"
+        dt_jars = (
+            sorted(tools_dir.glob("diaTracer*.jar")) + sorted(tools_dir.glob("diatracer*.jar"))
+        ) if tools_dir.is_dir() else []
+        if dt_jars:
+            logger.info("DiaTracer (%s): %s", ver_id, dt_jars[0])
         else:
-            logger.info("Could not detect required diaTracer version; downloading latest.")
-
-        result = _find_asset(required)
-        if result is None:
-            logger.error("No diaTracer release found for version %s", required)
+            logger.warning("DiaTracer jar not found in %s (version %s).", tools_dir, ver_id)
             success = False
-            continue
-        jar_name, download_url = result
-
-        dest = tools_dir / jar_name
-        if dest.exists():
-            logger.info("DiaTracer already present: %s — skipping.", dest)
-            continue
-        logger.info("Downloading %s → %s ...", jar_name, dest)
-        try:
-            urllib.request.urlretrieve(download_url, str(dest), reporthook=_progress)
-            print()
-        except Exception as exc:
-            logger.error("Download failed: %s", exc)
-            success = False
-            continue
-        logger.info("Downloaded: %s", dest)
 
     return success
 
 
 # ── DIA-NN download ───────────────────────────────────────────────────────────
 
-def _get_latest_diann_linux_asset() -> tuple[str, str, str] | None:
-    """Return (version, filename, download_url) for the latest DIA-NN Linux binary."""
+def _get_diann_linux_assets() -> dict[str, tuple[str, str]]:
+    """Return {version: (filename, download_url)} for all DIA-NN Linux ZIPs across all releases.
+
+    Handles two naming conventions:
+      2.x:   DIA-NN-2.5.0-Academia-Linux.zip  (all 2.x assets live in the single "2.0" release tag)
+      1.9.x: diann-1.9.2.Linux.zip            (each version has its own release tag)
+    For the same version, stable > preview and update > plain.
+    """
     import json
+    import re
     req = urllib.request.Request(DIANN_API_URL, headers={"User-Agent": "proteobench-setup/1.0"})
     with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-    tag = data["tag_name"]
-    version = tag.lstrip("v")
-    for asset in data.get("assets", []):
-        name = asset["name"].lower()
-        # Match the Linux binary: typically "diann-linux" or "diann-{version}" without extension
-        if "linux" in name and not name.endswith((".zip", ".tar.gz", ".md5", ".sha256")):
-            return version, asset["name"], asset["browser_download_url"]
-    return None
+        releases = json.loads(resp.read())
+
+    # 2.x: DIA-NN-2.5.0-Academia-Linux[-Preview].zip → version from filename
+    new_pat = re.compile(
+        r"DIA-NN-(\d+\.\d+(?:\.\d+)?)-Academia-Linux(?:-Preview)?\.zip", re.IGNORECASE
+    )
+    # 1.9.x: diann-1.9.2.Linux[_update_YYYY-MM-DD].zip → version from filename
+    old_pat = re.compile(
+        r"diann-(\d+\.\d+(?:\.\d+)?)\.Linux(?:_[^.]+)?\.zip", re.IGNORECASE
+    )
+
+    assets: dict[str, tuple[str, str]] = {}
+    for release in releases:
+        for asset in release.get("assets", []):
+            name = asset["name"]
+            url = asset["browser_download_url"]
+            m = new_pat.match(name) or old_pat.match(name)
+            if not m:
+                continue
+            version = m.group(1)
+            is_preview = "preview" in name.lower()
+            is_update = "_update_" in name.lower()
+            existing = assets.get(version)
+            if existing is None:
+                assets[version] = (name, url)
+            elif is_preview and "preview" not in existing[0].lower():
+                pass  # never overwrite stable with preview
+            elif is_update and "_update_" not in existing[0].lower():
+                assets[version] = (name, url)  # prefer update patch over plain release
+    return assets
 
 
 def download_diann(cfg: dict, config_path: Path) -> bool:
-    logger.info("Fetching latest DIA-NN release info from GitHub ...")
+    import tempfile
+    import zipfile
+
+    print(DIANN_NOTICE_TEXT)
+    logger.info("Fetching DIA-NN release assets from GitHub ...")
     try:
-        result = _get_latest_diann_linux_asset()
+        assets = _get_diann_linux_assets()
     except Exception as exc:
         logger.error("Could not fetch DIA-NN release info: %s", exc)
         logger.error("Download manually from https://github.com/vdemichev/DiaNN/releases")
         return False
 
-    if result is None:
+    if not assets:
         logger.error(
-            "No Linux binary found in the latest DIA-NN release. "
+            "No Linux ZIPs found in the DIA-NN release. "
             "Check https://github.com/vdemichev/DiaNN/releases manually."
         )
         return False
 
-    version, filename, url = result
-
-    # Install into a per-version subdirectory
-    install_dir = Path(MSFRAGGER_INSTALL_DIR).parent / f"diann-{version}"
-    install_dir.mkdir(parents=True, exist_ok=True)
-    dest = install_dir / "diann-linux"
-
-    if dest.exists():
-        logger.info("DIA-NN %s already present at %s — skipping download.", version, dest)
-    else:
-        logger.info("Downloading DIA-NN %s (%s) ...", version, filename)
-        try:
-            urllib.request.urlretrieve(url, str(dest), reporthook=_progress)
-            print()
-            dest.chmod(dest.stat().st_mode | 0o111)  # make executable
-        except Exception as exc:
-            logger.error("Download failed: %s", exc)
-            return False
-        logger.info("Downloaded and made executable: %s", dest)
-
-    # Update config.yaml: fill in binary for any DIA-NN version entry where binary is empty/CHANGE_ME
+    success = True
     modified = False
+
     for version_cfg in cfg.get("tools", {}).get("diann", {}).get("versions", []):
-        existing_binary = version_cfg.get("binary", "")
-        if not existing_binary or "CHANGE_ME" in existing_binary or not Path(existing_binary).exists():
-            if version_cfg.get("id") == version:
-                version_cfg["binary"] = str(dest)
-                version_cfg["enabled"] = True
-                modified = True
+        ver_id = version_cfg.get("id", "")
+        dest = Path(version_cfg.get("binary", ""))
+
+        if not version_cfg.get("binary"):
+            logger.warning("DIA-NN version %s has no 'binary:' path in config.yaml — skipping.", ver_id)
+            continue
+
+        if dest.exists():
+            logger.info("DIA-NN %s already present at %s — skipping.", ver_id, dest)
+            continue
+
+        if ver_id not in assets:
+            logger.warning(
+                "DIA-NN %s: no matching release asset found. Available versions: %s.",
+                ver_id, ", ".join(sorted(assets.keys())),
+            )
+            continue
+
+        filename, url = assets[ver_id]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = Path(tmpdir) / filename
+            logger.info("Downloading DIA-NN %s (%s) → %s ...", ver_id, filename, dest)
+            try:
+                urllib.request.urlretrieve(url, str(zip_path), reporthook=_progress)
+                print()
+            except Exception as exc:
+                logger.error("Download failed: %s", exc)
+                success = False
+                continue
+
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(dest.parent)
+
+        # The zip may extract into a subdirectory; search recursively for the binary.
+        binary_path = None
+        for name_candidate in ("diann-linux", "diann"):
+            hits = [f for f in dest.parent.rglob(name_candidate) if f.is_file()]
+            if hits:
+                binary_path = hits[0]
+                break
+
+        if binary_path is None:
+            logger.error("Could not locate diann binary in %s", dest.parent)
+            success = False
+            continue
+
+        if binary_path != dest:
+            binary_path.rename(dest)
+
+        dest.chmod(dest.stat().st_mode | 0o111)
+        logger.info("Installed DIA-NN %s at %s", ver_id, dest)
+        version_cfg["enabled"] = True
+        modified = True
 
     if modified:
         save_config(cfg, config_path)
-        logger.info(
-            "Updated config.yaml: diann version %s binary set to %s and enabled=true", version, dest
-        )
-    else:
-        logger.info(
-            "Binary downloaded to %s. If your config.yaml lists a different version, "
-            "manually set binary: %s for the matching version entry.", dest, dest
-        )
+        logger.info("Updated config.yaml: set enabled=true for downloaded DIA-NN versions.")
 
-    return True
+    return success
+
+
+# ── AlphaDIA install ──────────────────────────────────────────────────────────
+
+def install_alphadia(cfg: dict) -> bool:
+    """pip-install AlphaDIA using the Python interpreter set in global.python."""
+    alphadia_cfg = cfg.get("tools", {}).get("alphadia", {})
+    versions = alphadia_cfg.get("versions", [])
+    if not versions:
+        logger.warning("No alphadia version entries found in config.")
+        return False
+
+    python = cfg.get("global", {}).get("python", "python3")
+    success = True
+    for version in versions:
+        ver_id = version.get("id", "?")
+        logger.info("Installing alphadia==%s using %s ...", ver_id, python)
+        r = subprocess.run(
+            [python, "-m", "pip", "install", f"alphadia=={ver_id}"],
+            capture_output=False,
+        )
+        if r.returncode != 0:
+            logger.error("pip install alphadia==%s failed.", ver_id)
+            success = False
+        else:
+            logger.info("alphadia==%s installed successfully.", ver_id)
+
+    return success
+
+
+# ── MetaMorpheus download ─────────────────────────────────────────────────────
+
+def download_metamorpheus(cfg: dict) -> bool:
+    """Download the latest MetaMorpheus release and extract to configured dir."""
+    import json
+    import zipfile
+
+    mm_cfg = cfg.get("tools", {}).get("metamorpheus", {})
+    versions = mm_cfg.get("versions", [])
+    if not versions:
+        logger.warning("No metamorpheus version entries found in config.")
+        return False
+
+    logger.info("Fetching latest MetaMorpheus release info from GitHub ...")
+    try:
+        req = urllib.request.Request(METAMORPHEUS_API_URL, headers={"User-Agent": "proteobench-setup/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+    except Exception as exc:
+        logger.error("Could not fetch MetaMorpheus release info: %s", exc)
+        logger.error("Download manually from https://github.com/smith-chem-wisc/MetaMorpheus/releases")
+        return False
+
+    tag = data["tag_name"]
+    version = tag.lstrip("v")
+    # Pick the command-line zip; skip the Windows .msi installer.
+    zip_url = None
+    zip_name = None
+    for asset in data.get("assets", []):
+        name = asset["name"]
+        if name.endswith(".zip") and not name.endswith(".msi"):
+            zip_url = asset["browser_download_url"]
+            zip_name = name
+            break
+    if zip_url is None:
+        logger.error("No ZIP found in MetaMorpheus release %s.", tag)
+        logger.error("Download manually from https://github.com/smith-chem-wisc/MetaMorpheus/releases")
+        return False
+
+    success = True
+    for version_cfg in versions:
+        mm_dir = Path(version_cfg.get("dir", ""))
+        if not mm_dir.parent.exists():
+            logger.error("Parent directory does not exist for metamorpheus dir: %s", mm_dir)
+            success = False
+            continue
+
+        dll = mm_dir / "CMD.dll"
+        if dll.exists():
+            logger.info("MetaMorpheus CMD.dll already present at %s — skipping.", dll)
+            continue
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = Path(tmpdir) / zip_name
+            logger.info("Downloading MetaMorpheus %s (%s) ...", version, zip_name)
+            try:
+                urllib.request.urlretrieve(zip_url, str(zip_path), reporthook=_progress)
+                print()
+            except Exception as exc:
+                logger.error("Download failed: %s", exc)
+                success = False
+                continue
+
+            mm_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Extracting to %s ...", mm_dir)
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(mm_dir)
+
+        if not dll.exists():
+            logger.error("Extraction complete but CMD.dll not found at %s", dll)
+            success = False
+        else:
+            logger.info("MetaMorpheus %s installed at %s", version, mm_dir)
+
+    return success
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -547,12 +737,16 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python setup.py                          # interactive guided setup
-  python setup.py --check                  # show tool status without downloading anything
-  python setup.py --accept-license         # non-interactive full setup
-  python setup.py --download-diann         # download latest DIA-NN Linux binary
-  python setup.py --sage-only              # compile Sage from source
-  python setup.py --diatracer-only         # download DiaTracer (no license needed)
+  python setup.py                                    # interactive guided setup
+  python setup.py --check                            # show tool status without downloading anything
+  python setup.py --accept-license                   # non-interactive full setup
+  python setup.py --sage-only                        # compile Sage from source
+  python setup.py --alphadia-only                    # pip-install AlphaDIA into configured venv
+  python setup.py --metamorpheus-only                # download latest MetaMorpheus release
+  python setup.py --msfragger-only --accept-license  # download MSFragger only
+  python setup.py --ionquant-only --accept-license   # download IonQuant only
+  python setup.py --diatracer-only --accept-license  # download DiaTracer only
+  python setup.py --download-diann                   # download latest DIA-NN Linux binary
 """,
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG,
@@ -560,12 +754,14 @@ Examples:
     parser.add_argument("--check", action="store_true",
                         help="Show setup status for all tools and exit")
     parser.add_argument("--accept-license", action="store_true",
-                        help="Accept the MSFragger academic license (required for MSFragger/IonQuant downloads)")
-    parser.add_argument("--download-diann",  action="store_true", help="Download latest DIA-NN Linux binary")
-    parser.add_argument("--sage-only",       action="store_true", help="Only compile Sage from source")
-    parser.add_argument("--msfragger-only",  action="store_true", help="Only download MSFragger")
-    parser.add_argument("--ionquant-only",   action="store_true", help="Only download IonQuant")
-    parser.add_argument("--diatracer-only",  action="store_true", help="Only download DiaTracer")
+                        help="Accept the Nesvilab Academic License (required for MSFragger, IonQuant, and DiaTracer downloads)")
+    parser.add_argument("--download-diann",      action="store_true", help="Download latest DIA-NN Linux binary")
+    parser.add_argument("--sage-only",           action="store_true", help="Only compile Sage from source")
+    parser.add_argument("--alphadia-only",       action="store_true", help="Only pip-install AlphaDIA into configured venv")
+    parser.add_argument("--metamorpheus-only",   action="store_true", help="Only download latest MetaMorpheus release")
+    parser.add_argument("--msfragger-only",      action="store_true", help="Only download MSFragger (requires --accept-license)")
+    parser.add_argument("--ionquant-only",       action="store_true", help="Only download IonQuant (requires --accept-license)")
+    parser.add_argument("--diatracer-only",      action="store_true", help="Only download DiaTracer (requires --accept-license)")
     args = parser.parse_args()
 
     if not args.config.exists():
@@ -583,12 +779,18 @@ Examples:
         ok = check_setup(cfg)
         sys.exit(0 if ok else 1)
 
-    exclusive = args.sage_only or args.msfragger_only or args.ionquant_only or args.diatracer_only or args.download_diann
-    do_sage       = args.sage_only      or not exclusive
-    do_msfragger  = args.msfragger_only or not exclusive
-    do_ionquant   = args.ionquant_only  or not exclusive
-    do_diatracer  = args.diatracer_only or not exclusive
-    do_diann      = args.download_diann or not exclusive
+    exclusive = (
+        args.sage_only or args.alphadia_only or args.metamorpheus_only
+        or args.msfragger_only or args.ionquant_only or args.diatracer_only
+        or args.download_diann
+    )
+    do_sage           = args.sage_only          or not exclusive
+    do_alphadia       = args.alphadia_only       or not exclusive
+    do_metamorpheus   = args.metamorpheus_only   or not exclusive
+    do_msfragger      = args.msfragger_only      or not exclusive
+    do_ionquant       = args.ionquant_only       or not exclusive
+    do_diatracer      = args.diatracer_only      or not exclusive
+    do_diann          = args.download_diann      or not exclusive
 
     success = True
 
@@ -597,22 +799,34 @@ Examples:
         if not compile_sage(cfg):
             success = False
 
-    # MSFragger and IonQuant require license acceptance
-    needs_license = do_msfragger or do_ionquant
+    if do_alphadia:
+        logger.info("=== Installing AlphaDIA ===")
+        if not install_alphadia(cfg):
+            success = False
+
+    if do_metamorpheus:
+        logger.info("=== Downloading MetaMorpheus ===")
+        if not download_metamorpheus(cfg):
+            success = False
+
+    # MSFragger, IonQuant, and DiaTracer all require Nesvilab license acceptance
+    needs_license = do_msfragger or do_ionquant or do_diatracer
     license_accepted = args.accept_license
     if needs_license and not license_accepted:
         if sys.stdin.isatty():
             license_accepted = _ask_license()
             if not license_accepted:
-                logger.warning("License not accepted — skipping MSFragger and IonQuant downloads.")
+                logger.warning("License not accepted — skipping MSFragger, IonQuant, and DiaTracer downloads.")
                 do_msfragger = False
                 do_ionquant = False
+                do_diatracer = False
         else:
             # Non-interactive mode: print license text and require explicit flag
-            print(MSFRAGGER_LICENSE_TEXT)
+            print(NESVILAB_LICENSE_TEXT)
             print("Re-run with --accept-license to proceed with downloads.")
             do_msfragger = False
             do_ionquant = False
+            do_diatracer = False
 
     if do_msfragger:
         logger.info("=== Downloading MSFragger ===")

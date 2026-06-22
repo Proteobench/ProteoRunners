@@ -147,15 +147,26 @@ Jobs that already have a `.done` marker in the output directory are also skipped
 
 The Nextflow runner writes results to the same `global.output_dir` as the Python runner. The summary file is named `run_summary_nf.tsv` (vs `run_summary_<timestamp>.tsv` for the Python runner). Both files use identical columns: `tool`, `version`, `dataset`, `success`, `skipped`, `runtime_s`, `output_dir`, `error_msg`.
 
-Nextflow also writes job working directories under `work/` in the project root. These can be deleted with `nextflow clean` once the run is complete.
+Nextflow task working directories are placed under `<output_dir>/nf_work/`. To delete them after a successful run:
+
+```bash
+nextflow clean -f
+```
+
+To also redirect the Nextflow log into the results directory, pass `-log` on the command line:
+
+```bash
+nextflow run proteobench.nf -log /path/to/results/.nextflow.log
+```
 
 ### Cluster / HPC execution
 
-To run on SLURM (or another executor), add a `nextflow.config` file alongside `proteobench.nf`:
+To run on SLURM (or another executor), extend `nextflow.config` (which already exists in the project root) with executor settings:
 
 ```groovy
-process.executor = 'slurm'
-process.queue    = 'gpu'
+// append to nextflow.config
+process.executor      = 'slurm'
+process.queue         = 'gpu'
 process.clusterOptions = '--mem=64G --time=04:00:00'
 ```
 

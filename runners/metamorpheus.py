@@ -2,9 +2,9 @@
 
 Supported search_params keys:
   fdr_psm (→ QValueThreshold), match_between_runs (→ MatchBetweenRuns),
-  precursor_mass_tolerance_ppm, fragment_mass_tolerance_ppm,
-  missed_cleavages, min_peptide_length, max_peptide_length,
-  fixed_mods, variable_mods, max_mods_per_peptide,
+  normalize (→ Normalize), precursor_mass_tolerance_ppm,
+  fragment_mass_tolerance_ppm, missed_cleavages, min_peptide_length,
+  max_peptide_length, fixed_mods, variable_mods, max_mods_per_peptide,
   min_charge, max_charge
 """
 
@@ -74,6 +74,7 @@ class MetaMorpheusRunner(BaseRunner):
             "max_mods":           sp.get("max_mods_per_peptide", 3),
             "fdr":                sp.get("fdr_psm", 0.01),
             "mbr":                sp.get("match_between_runs", False),
+            "normalize":          sp.get("normalize", True),
             "min_charge":         sp.get("min_charge", 1),
             "max_charge":         sp.get("max_charge", 4),
             "threads":            self.global_cfg.get("threads_per_job", 16),
@@ -89,7 +90,7 @@ TaskType = "Search"
 DoParsimony = true
 NoOneHitWonders = false
 ModPeptidesAreDifferent = false
-Normalize = false
+Normalize = {str(p['normalize']).lower()}
 QuantifyPpmTol = {float(p['precursor_tol_ppm'])}
 MatchBetweenRuns = {str(p['mbr']).lower()}
 DoLabelFreeQuantification = true

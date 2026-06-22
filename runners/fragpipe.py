@@ -1,7 +1,7 @@
 """FragPipe runner.
 
 Supported search_params keys:
-  fdr_psm, fdr_peptide, fdr_protein, match_between_runs,
+  fdr_psm, fdr_peptide, fdr_protein, match_between_runs, normalize,
   precursor_mass_tolerance_ppm, fragment_mass_tolerance_ppm,
   missed_cleavages, min_peptide_length, max_peptide_length,
   fixed_mods, variable_mods, max_mods_per_peptide,
@@ -204,6 +204,7 @@ class FragPipeRunner(BaseRunner):
             "fdr_peptide":        sp.get("fdr_peptide", 0.01),
             "fdr_protein":        sp.get("fdr_protein", 0.01),
             "mbr":                sp.get("match_between_runs", False),
+            "normalize":          sp.get("normalize", True),
             "min_charge":         sp.get("min_charge", 2),
             "max_charge":         sp.get("max_charge", 4),
             "fixed_mods":         sp.get("fixed_mods", []),
@@ -265,6 +266,7 @@ class FragPipeRunner(BaseRunner):
             "msfragger.table.fix-mods":                 _build_fix_mods_table(p["fixed_mods"]),
             "msfragger.table.var-mods":                 _build_var_mods_table(p["variable_mods"]),
             "ionquant.mbr":                             "1" if p["mbr"] else "0",
+            "ionquant.normalization":                   "1" if p["normalize"] else "0",
             "ionquant.ionfdr":                          str(p["fdr_psm"]),
             "phi-report.filter": (
                 f"--sequential --psm {p['fdr_psm']} --pep {p['fdr_peptide']} --prot {p['fdr_protein']} --picked"

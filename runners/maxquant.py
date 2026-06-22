@@ -1,7 +1,7 @@
 """MaxQuant runner.
 
 Supported search_params keys:
-  fdr_psm, fdr_peptide, fdr_protein, match_between_runs,
+  fdr_psm, fdr_peptide, fdr_protein, match_between_runs, normalize,
   precursor_mass_tolerance_ppm, fragment_mass_tolerance_ppm,
   missed_cleavages, min_peptide_length, max_peptide_length,
   fixed_mods, variable_mods, max_mods_per_peptide,
@@ -77,6 +77,7 @@ class MaxQuantRunner(BaseRunner):
             "fdr_peptide":          sp.get("fdr_peptide", 0.01),
             "fdr_protein":          sp.get("fdr_protein", 0.01),
             "mbr":                  sp.get("match_between_runs", False),
+            "normalize":            sp.get("normalize", True),
             "min_charge":           sp.get("min_charge", 2),
             "max_charge":           sp.get("max_charge", 4),
         }
@@ -152,6 +153,15 @@ class MaxQuantRunner(BaseRunner):
                 dirty = True
             if ppm_el is not None and ppm_el.text != 'True':
                 ppm_el.text = 'True'
+                dirty = True
+
+        # --- 5. LFQ normalization ---
+        # lfqNormType lives inside parameterGroup: 1=enabled, 0=disabled.
+        lfq_norm = "1" if p["normalize"] else "0"
+        for pg in root.findall('.//parameterGroup'):
+            lfq_el = pg.find('lfqNormType')
+            if lfq_el is not None and lfq_el.text != lfq_norm:
+                lfq_el.text = lfq_norm
                 dirty = True
 
         if dirty:

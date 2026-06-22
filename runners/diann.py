@@ -1,7 +1,7 @@
 """DIA-NN runner.
 
 Supported search_params keys (others ignored):
-  fdr_psm, fdr_protein, match_between_runs,
+  fdr_psm, fdr_protein, match_between_runs, normalize,
   precursor_mass_tolerance_ppm, fragment_mass_tolerance_ppm,
   missed_cleavages, min_peptide_length, max_peptide_length,
   fixed_mods, variable_mods, max_mods_per_peptide,
@@ -186,6 +186,7 @@ class DIANNRunner(BaseRunner):
             "min_fr_mz":        fragment_mz[0],
             "max_fr_mz":        fragment_mz[1],
             "mbr":              sp.get("match_between_runs", False),
+            "normalize":        sp.get("normalize", True),
         }
 
     def _fixed_mod_args(self, mod_names: list[str]) -> list[str]:
@@ -267,5 +268,8 @@ class DIANNRunner(BaseRunner):
 
         if p["mbr"]:
             cmd.append("--reanalyse")
+
+        if not p["normalize"]:
+            cmd.append("--no-norm")
 
         return cmd

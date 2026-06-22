@@ -7,7 +7,7 @@ params.config          = "${projectDir}/config.yaml"
 params.tool            = null     // restrict to one tool (e.g. --tool diann)
 params.dataset         = null     // restrict to one dataset
 params.no_preflight    = false    // skip preflight checks
-params.max_parallel_jobs = 6      // overridden from config.global.max_parallel_jobs at startup
+params.max_parallel_jobs = 6      // default; nextflow.config overrides from config.global.max_parallel_jobs
 
 // ─── Processes ───────────────────────────────────────────────────────────────
 
@@ -39,8 +39,8 @@ process RUN_JOB {
 }
 
 process WRITE_SUMMARY {
-    // Publish the TSV alongside the rest of the results.
-    publishDir params.publish_dir, mode: 'copy', overwrite: true
+    // publish_dir is set by nextflow.config from config.global.output_dir.
+    publishDir params.publish_dir ?: "${projectDir}/results", mode: 'copy', overwrite: true
 
     input:
     path result_jsons   // collected list of per-job JSON files
@@ -60,16 +60,7 @@ process WRITE_SUMMARY {
 
 workflow {
 
-    // Read config so we can pick up max_parallel_jobs and output_dir.
     def configPath = new File(params.config as String).absolutePath
-    def cfg = new org.yaml.snakeyaml.Yaml().load(new File(configPath).text)
-
-    def maxParallel = (cfg?.global?.max_parallel_jobs ?: params.max_parallel_jobs) as Integer
-    def outputDir   = cfg?.global?.output_dir ?: "${projectDir}/results"
-
-    // Propagate back to params so process directives pick them up.
-    params.max_parallel_jobs = maxParallel
-    params.publish_dir       = outputDir
 
     // ── Enumerate enabled jobs via Python ────────────────────────────────────
     def enumCmd = ["python3",
@@ -78,14 +69,19 @@ workflow {
     if (params.tool)    enumCmd += ["--tool",    params.tool as String]
     if (params.dataset) enumCmd += ["--dataset", params.dataset as String]
 
-    def enumProc = enumCmd.execute()
-    def enumOut  = enumProc.text
-    def enumErr  = enumProc.err.text
+    // consumeProcessOutput reads stdout and stderr concurrently to avoid the
+    // OS pipe-buffer deadlock that occurs when reading them sequentially.
+    def enumStdout = new StringBuilder()
+    def enumStderr = new StringBuilder()
+    def enumProc   = enumCmd.execute()
+    enumProc.consumeProcessOutput(enumStdout, enumStderr)
     enumProc.waitFor()
 
     if (enumProc.exitValue() != 0) {
-        error "enumerate_jobs.py failed (exit ${enumProc.exitValue()}):\n${enumErr}"
+        error "enumerate_jobs.py failed (exit ${enumProc.exitValue()}):\n${enumStderr}"
     }
+
+    def enumOut = enumStdout.toString()
 
     def jobs = enumOut.readLines()
                       .findAll  { it.trim() }
@@ -100,7 +96,7 @@ workflow {
         return
     }
 
-    log.info "Found ${jobs.size()} job(s) to run (max_parallel_jobs=${maxParallel}):"
+    log.info "Found ${jobs.size()} job(s) to run (max_parallel_jobs=${params.max_parallel_jobs}):"
     jobs.each { t, v, d ->
         log.info "  ${t.padRight(15)} v${v.padRight(8)}  ${d}"
     }

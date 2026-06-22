@@ -2,6 +2,7 @@
 
 Supported search_params keys:
   fdr_psm (→ fdr.fdr), match_between_runs (→ search.mbr_step_enabled),
+  normalize (→ search_output.normalize_lfq),
   precursor_mass_tolerance_ppm, fragment_mass_tolerance_ppm,
   missed_cleavages, min_peptide_length, max_peptide_length,
   fixed_mods, variable_mods,
@@ -90,6 +91,7 @@ class AlphaDIARunner(BaseRunner):
             "precursor_tol":   sp.get("precursor_mass_tolerance_ppm", 20),
             "fragment_tol":    sp.get("fragment_mass_tolerance_ppm", 20),
             "mbr":             sp.get("match_between_runs", False),
+            "normalize_lfq":   sp.get("normalize", True),
         }
 
     def _write_alphadia_config(self, input_files: list[Path], fasta: Path, output_dir: Path) -> Path:
@@ -132,6 +134,7 @@ class AlphaDIARunner(BaseRunner):
                 "extraction_backend": "python" if self.dataset_cfg.get("format") == "d" else "rust",
             },
             "fdr": {"fdr": p["fdr_psm"]},
+            "search_output": {"normalize_lfq": p["normalize_lfq"]},
         }
 
         cfg = {k: v for k, v in cfg.items() if v is not None}

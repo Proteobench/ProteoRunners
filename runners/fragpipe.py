@@ -201,6 +201,7 @@ class FragPipeRunner(BaseRunner):
             "fragment_tol_ppm":   sp.get("fragment_mass_tolerance_ppm", 20),
             "max_mods":           sp.get("max_mods_per_peptide", 3),
             "fdr_psm":            sp.get("fdr_psm", 0.01),
+            "fdr_peptide":        sp.get("fdr_peptide", 0.01),
             "fdr_protein":        sp.get("fdr_protein", 0.01),
             "mbr":                sp.get("match_between_runs", False),
             "min_charge":         sp.get("min_charge", 2),
@@ -266,7 +267,7 @@ class FragPipeRunner(BaseRunner):
             "ionquant.mbr":                             "1" if p["mbr"] else "0",
             "ionquant.ionfdr":                          str(p["fdr_psm"]),
             "phi-report.filter": (
-                f"--sequential --prot {p['fdr_protein']} --picked"
+                f"--sequential --psm {p['fdr_psm']} --pep {p['fdr_peptide']} --prot {p['fdr_protein']} --picked"
             ),
         }
 

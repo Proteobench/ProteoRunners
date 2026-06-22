@@ -113,8 +113,6 @@ class DIANNRunner(BaseRunner):
                         return mzmls
         return super().get_input_files()
 
-        return super().get_input_files()
-
     @property
     def tool_name(self) -> str:
         return "diann"
@@ -254,6 +252,7 @@ class DIANNRunner(BaseRunner):
 
         cmd += self._fixed_mod_args(p["fixed_mods"])
         cmd += self._var_mod_args(p["var_mods"])
+        cmd += ["--var-mods", str(p["max_mods"])]
 
         library = (self.extra or {}).get("library", "")
         if library:

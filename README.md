@@ -2,6 +2,15 @@
 
 This pipeline runs multiple proteomics search engines on ProteoBench benchmark datasets and collects output files for downstream submission to [ProteoBench](https://proteobench.cubimed.rub.de/). It supports DIA-NN, AlphaDIA, Sage, FragPipe, MaxQuant, and MetaMorpheus across DDA and DIA acquisition modes.
 
+Two equivalent runners are provided:
+
+| Runner | Entry point | Parallelism | Best for |
+|--------|------------|-------------|---------|
+| Python | `run_proteobench.py` | `ThreadPoolExecutor` on one machine | Interactive use, dry-run preview |
+| Nextflow | `proteobench.nf` | Nextflow executor (local, SLURM, …) | Cluster runs, reproducibility, resumable |
+
+Both runners use the same `config.yaml`, the same per-tool parameter logic, and produce the same output directory layout and summary TSV.
+
 ---
 
 ## Prerequisites
@@ -10,10 +19,11 @@ Install the following system dependencies before running the pipeline.
 
 | Dependency | Required for | Install |
 |------------|-------------|---------|
-| Python 3.11+ | Pipeline itself | `conda install python=3.11` or [python.org](https://www.python.org/downloads/) |
+| Python 3.11+ | Both runners | `conda install python=3.11` or [python.org](https://www.python.org/downloads/) |
 | .NET 8 runtime | MaxQuant, MetaMorpheus | `apt install dotnet-runtime-8.0` (Linux) or `winget install Microsoft.DotNet.Runtime.8` (Windows) |
 | Java 11+ | FragPipe | `apt install default-jre` or `conda install -c conda-forge openjdk` |
 | Rust / cargo | Sage (compilation) | `curl https://sh.rustup.rs -sSf \| sh` |
+| Nextflow 23.10+ | Nextflow runner only | `curl -s https://get.nextflow.io \| bash` then move to a directory on `$PATH` |
 
 Check that each dependency is available:
 ```bash
@@ -21,11 +31,12 @@ python --version       # should print 3.11 or higher
 dotnet --version       # needed for MaxQuant / MetaMorpheus
 java -version          # needed for FragPipe
 cargo --version        # needed for Sage
+nextflow -version      # needed for the Nextflow runner
 ```
 
 ---
 
-## Quick start
+## Quick start (Python runner)
 
 ### Step 1 — Install Python dependencies
 
@@ -85,6 +96,70 @@ python run_proteobench.py --dry-run
 # Execute all enabled jobs
 python run_proteobench.py
 ```
+
+---
+
+## Quick start (Nextflow runner)
+
+Steps 1–3 above (install deps, configure, download binaries) are identical. Once that is done:
+
+### Run the pipeline
+
+```bash
+nextflow run proteobench.nf
+```
+
+The pipeline reads `config.yaml` from the project root by default. It automatically picks up `global.output_dir` and `global.max_parallel_jobs` from that file.
+
+### Common options
+
+| Flag | Equivalent Python flag | Description |
+|------|----------------------|-------------|
+| `--config /path/to/config.yaml` | `--config` | Path to config file (default: `config.yaml` next to `proteobench.nf`) |
+| `--tool diann` | `--tool` | Restrict run to one tool |
+| `--dataset Entrapment_DIA` | `--dataset` | Restrict run to one dataset |
+| `--no_preflight` | `--no-preflight` | Skip preflight checks before each job |
+| `--max_parallel_jobs 4` | `--max-parallel-jobs` | Override concurrency (default comes from `config.yaml`) |
+
+Example — run only DIA-NN jobs, skip preflight:
+
+```bash
+nextflow run proteobench.nf --tool diann --no_preflight
+```
+
+Example — run against a custom config and limit concurrency:
+
+```bash
+nextflow run proteobench.nf --config /data/my_config.yaml --max_parallel_jobs 2
+```
+
+### Resuming interrupted runs
+
+Nextflow caches each completed job in the `work/` directory. If a run is interrupted, resume it without re-running successful jobs:
+
+```bash
+nextflow run proteobench.nf -resume
+```
+
+Jobs that already have a `.done` marker in the output directory are also skipped by the runner logic itself, so both layers protect against redundant work.
+
+### Output
+
+The Nextflow runner writes results to the same `global.output_dir` as the Python runner. The summary file is named `run_summary_nf.tsv` (vs `run_summary_<timestamp>.tsv` for the Python runner). Both files use identical columns: `tool`, `version`, `dataset`, `success`, `skipped`, `runtime_s`, `output_dir`, `error_msg`.
+
+Nextflow also writes job working directories under `work/` in the project root. These can be deleted with `nextflow clean` once the run is complete.
+
+### Cluster / HPC execution
+
+To run on SLURM (or another executor), add a `nextflow.config` file alongside `proteobench.nf`:
+
+```groovy
+process.executor = 'slurm'
+process.queue    = 'gpu'
+process.clusterOptions = '--mem=64G --time=04:00:00'
+```
+
+See the [Nextflow executor documentation](https://www.nextflow.io/docs/latest/executor.html) for other executors (PBS, LSF, Kubernetes, etc.). No changes to `proteobench.nf` itself are needed.
 
 ---
 
@@ -222,3 +297,6 @@ The `.done` marker causes the pipeline to skip that job on the next run (useful 
 | `exit code 1 — check log: ...` | Tool crashed during search | Open the `stderr.log` file shown in the error |
 | Job is skipped unexpectedly | `.done` marker exists | Delete the `.done` file in the output directory, or set `overwrite: true` |
 | `No enabled jobs found` | All versions have `enabled: false` | Set `enabled: true` for at least one version in `config.yaml` |
+| `enumerate_jobs.py failed` (Nextflow) | Python or YAML not on PATH | Run Nextflow from the activated conda/pip env; check `python3 --version` |
+| `No module named 'yaml'` (Nextflow) | pyyaml not installed | `pip install pyyaml` |
+| Nextflow process hangs | `max_parallel_jobs` too high for available cores/RAM | Lower `global.max_parallel_jobs` in `config.yaml` or pass `--max_parallel_jobs N` |

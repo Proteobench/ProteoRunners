@@ -23,8 +23,8 @@ Usage (non-interactive / CI):
     python setup.py --alphadia-only         # pip-install AlphaDIA into configured venv
     python setup.py --metamorpheus-only     # download latest MetaMorpheus release
     python setup.py --msfragger-only --accept-license   # downloads FragPipe bundle (includes MSFragger)
-    python setup.py --ionquant-only --accept-license    # checks IonQuant present in FragPipe bundle
-    python setup.py --diatracer-only --accept-license
+    python setup.py --ionquant-only --accept-license    # download IonQuant via Nesvilab token (interactive)
+    python setup.py --diatracer-only --accept-license   # download DiaTracer via Nesvilab token (interactive)
     python setup.py --download-diann        # download latest DIA-NN Linux binary
 
 Status check:
@@ -50,9 +50,10 @@ SCRIPT_DIR = Path(__file__).parent
 DEFAULT_CONFIG = SCRIPT_DIR / "config.yaml"
 
 MSFRAGGER_LICENSE_URL = "https://msfragger.nesvilab.org/upgrading_msfragger.html"
-# MSFragger and IonQuant have no public GitHub releases; both ship inside the FragPipe bundle.
 FRAGPIPE_API_URL = "https://api.github.com/repos/Nesvilab/FragPipe/releases/latest"
-# DiaTracer (like MSFragger and IonQuant) ships inside the FragPipe bundle; no separate releases.
+# IonQuant and DiaTracer are downloaded via the Nesvilab academic upgrader (token sent by email).
+IONQUANT_UPGRADER_URL = "https://msfragger-upgrader.nesvilab.org/ionquant/"
+DIATRACER_UPGRADER_URL = "https://msfragger-upgrader.nesvilab.org/diatracer/"
 DIANN_API_URL = "https://api.github.com/repos/vdemichev/DiaNN/releases?per_page=100"
 METAMORPHEUS_API_URL = "https://api.github.com/repos/smith-chem-wisc/MetaMorpheus/releases/latest"
 
@@ -351,16 +352,18 @@ def _extract_zip_to(zip_path: Path, dest_dir: Path) -> None:
                     shutil.copyfileobj(src, dst)
 
 
-def _fragpipe_dir_populated(fp_dir: Path) -> bool:
-    return fp_dir.is_dir() and any(fp_dir.iterdir())
-
 
 def _ensure_fragpipe_bundle(version_cfgs: list[dict]) -> bool:
-    """Download and extract the FragPipe Linux bundle for any unpopulated dirs."""
+    """Download and extract the FragPipe Linux bundle for all given versions.
+
+    The caller is responsible for filtering to versions that actually need the
+    bundle; this function always downloads and extracts for each unique dir.
+    Deduplication by dir avoids redundant downloads when multiple config entries
+    share the same FragPipe installation path.
+    """
     import tempfile
 
-    needs_bundle = [v for v in version_cfgs if not _fragpipe_dir_populated(Path(v.get("dir", "")))]
-    if not needs_bundle:
+    if not version_cfgs:
         return True
 
     logger.info("Fetching latest FragPipe release info from GitHub ...")
@@ -371,9 +374,14 @@ def _ensure_fragpipe_bundle(version_cfgs: list[dict]) -> bool:
         logger.error("Download the FragPipe bundle from https://github.com/Nesvilab/FragPipe/releases")
         return False
 
+    seen: set[Path] = set()
     success = True
-    for version_cfg in needs_bundle:
+    for version_cfg in version_cfgs:
         fp_dir = Path(version_cfg.get("dir", ""))
+        if fp_dir in seen:
+            continue
+        seen.add(fp_dir)
+
         if not fp_dir.parent.exists():
             logger.error("Parent directory does not exist: %s", fp_dir.parent)
             success = False
@@ -428,10 +436,58 @@ def download_msfragger(cfg: dict, config_path: Path) -> bool:
     return success
 
 
+# ── Nesvilab academic upgrader helpers (IonQuant + DiaTracer) ─────────────────
+
+def _nesvilab_latest_version(base_url: str) -> str:
+    """Fetch the latest version string from a Nesvilab upgrader endpoint."""
+    req = urllib.request.Request(
+        base_url + "latest_version.php",
+        headers={"User-Agent": "proteobench-setup/1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return resp.read().decode().strip()
+
+
+def _nesvilab_download(base_url: str, version: str, token: str, dest: Path) -> bool:
+    """Download a JAR using the token received by email from the Nesvilab upgrader."""
+    import urllib.parse
+    encoded = urllib.parse.quote(f"{version}$jar")
+    url = f"{base_url}download.php?token={token}&download={encoded}"
+    logger.info("Downloading %s ...", url)
+    try:
+        urllib.request.urlretrieve(url, str(dest), reporthook=_progress)
+        print()
+    except Exception as exc:
+        logger.error("Download failed: %s", exc)
+        return False
+    if dest.stat().st_size < 1_000_000:
+        logger.error(
+            "Downloaded file is too small (%d bytes) — token may be invalid or expired.",
+            dest.stat().st_size,
+        )
+        dest.unlink(missing_ok=True)
+        return False
+    return True
+
+
+def _nesvilab_get_token(base_url: str, version: str, tool_name: str) -> str | None:
+    """Guide the user through obtaining a Nesvilab download token (sent by email)."""
+    print(f"\n  To download {tool_name} you need a one-time validation code.")
+    print(f"  1. Open: {base_url}")
+    print(f"  2. Select version {version}, fill in your academic details, and click Download.")
+    print(f"  3. A token will be sent to your email address.")
+    print(f"  4. Paste the token below.")
+    try:
+        token = input(f"  {tool_name} token: ").strip()
+    except EOFError:
+        return None
+    return token if token else None
+
+
 # ── IonQuant ──────────────────────────────────────────────────────────────────
 
 def download_ionquant(cfg: dict) -> bool:
-    """IonQuant ships inside the FragPipe bundle; download bundle if not yet extracted."""
+    """Download IonQuant via the Nesvilab academic upgrader (token sent by email)."""
     versions = cfg.get("tools", {}).get("fragpipe", {}).get("versions", [])
 
     def _has_ionquant(v: dict) -> bool:
@@ -439,28 +495,55 @@ def download_ionquant(cfg: dict) -> bool:
         return tools_dir.is_dir() and bool(sorted(tools_dir.glob("IonQuant*.jar")))
 
     missing = [v for v in versions if not _has_ionquant(v)]
-    if missing:
-        if not _ensure_fragpipe_bundle(missing):
-            return False
+    if not missing:
+        for v in versions:
+            tools_dir = Path(v.get("dir", "")) / "tools"
+            jars = sorted(tools_dir.glob("IonQuant*.jar"))
+            logger.info("IonQuant (%s): %s", v.get("id", "?"), jars[-1])
+        return True
 
+    try:
+        latest = _nesvilab_latest_version(IONQUANT_UPGRADER_URL)
+    except Exception as exc:
+        logger.error("Could not fetch latest IonQuant version: %s", exc)
+        return False
+    logger.info("IonQuant latest version from server: %s", latest)
+
+    if not sys.stdin.isatty():
+        logger.error(
+            "IonQuant download requires an interactive token. "
+            "Run setup.py interactively or place IonQuant-%s.jar in {fragpipe_dir}/tools/ manually "
+            "(download from %s).",
+            latest, IONQUANT_UPGRADER_URL,
+        )
+        return False
+
+    token = _nesvilab_get_token(IONQUANT_UPGRADER_URL, latest, "IonQuant")
+    if not token:
+        logger.warning("No token entered — IonQuant download skipped.")
+        return False
+
+    seen: set[Path] = set()
     success = True
-    for version_cfg in versions:
-        ver_id = version_cfg.get("id", "?")
+    for version_cfg in missing:
         tools_dir = Path(version_cfg.get("dir", "")) / "tools"
-        iq_jars = sorted(tools_dir.glob("IonQuant*.jar")) if tools_dir.is_dir() else []
-        if iq_jars:
-            logger.info("IonQuant (%s): %s", ver_id, iq_jars[0])
-        else:
-            logger.warning("IonQuant jar not found in %s (version %s).", tools_dir, ver_id)
+        if tools_dir in seen:
+            continue
+        seen.add(tools_dir)
+        tools_dir.mkdir(parents=True, exist_ok=True)
+        jar_path = tools_dir / f"IonQuant-{latest}.jar"
+        logger.info("Downloading IonQuant %s → %s ...", latest, jar_path)
+        if not _nesvilab_download(IONQUANT_UPGRADER_URL, latest, token, jar_path):
             success = False
-
+        else:
+            logger.info("IonQuant installed: %s", jar_path)
     return success
 
 
-# ── DiaTracer download ────────────────────────────────────────────────────────
+# ── DiaTracer ─────────────────────────────────────────────────────────────────
 
 def download_diatracer(cfg: dict) -> bool:
-    """DiaTracer ships inside the FragPipe bundle; download bundle if not yet extracted."""
+    """Download DiaTracer via the Nesvilab academic upgrader (token sent by email)."""
     versions = cfg.get("tools", {}).get("fragpipe", {}).get("versions", [])
 
     def _has_diatracer(v: dict) -> bool:
@@ -470,23 +553,51 @@ def download_diatracer(cfg: dict) -> bool:
         )
 
     missing = [v for v in versions if not _has_diatracer(v)]
-    if missing:
-        if not _ensure_fragpipe_bundle(missing):
-            return False
+    if not missing:
+        for v in versions:
+            tools_dir = Path(v.get("dir", "")) / "tools"
+            jars = (
+                sorted(tools_dir.glob("diaTracer*.jar")) +
+                sorted(tools_dir.glob("diatracer*.jar"))
+            )
+            logger.info("DiaTracer (%s): %s", v.get("id", "?"), jars[-1])
+        return True
 
+    try:
+        latest = _nesvilab_latest_version(DIATRACER_UPGRADER_URL)
+    except Exception as exc:
+        logger.error("Could not fetch latest DiaTracer version: %s", exc)
+        return False
+    logger.info("DiaTracer latest version from server: %s", latest)
+
+    if not sys.stdin.isatty():
+        logger.error(
+            "DiaTracer download requires an interactive token. "
+            "Run setup.py interactively or place diaTracer-%s.jar in {fragpipe_dir}/tools/ manually "
+            "(download from %s).",
+            latest, DIATRACER_UPGRADER_URL,
+        )
+        return False
+
+    token = _nesvilab_get_token(DIATRACER_UPGRADER_URL, latest, "DiaTracer")
+    if not token:
+        logger.warning("No token entered — DiaTracer download skipped.")
+        return False
+
+    seen: set[Path] = set()
     success = True
-    for version_cfg in versions:
-        ver_id = version_cfg.get("id", "?")
+    for version_cfg in missing:
         tools_dir = Path(version_cfg.get("dir", "")) / "tools"
-        dt_jars = (
-            sorted(tools_dir.glob("diaTracer*.jar")) + sorted(tools_dir.glob("diatracer*.jar"))
-        ) if tools_dir.is_dir() else []
-        if dt_jars:
-            logger.info("DiaTracer (%s): %s", ver_id, dt_jars[0])
-        else:
-            logger.warning("DiaTracer jar not found in %s (version %s).", tools_dir, ver_id)
+        if tools_dir in seen:
+            continue
+        seen.add(tools_dir)
+        tools_dir.mkdir(parents=True, exist_ok=True)
+        jar_path = tools_dir / f"diaTracer-{latest}.jar"
+        logger.info("Downloading DiaTracer %s → %s ...", latest, jar_path)
+        if not _nesvilab_download(DIATRACER_UPGRADER_URL, latest, token, jar_path):
             success = False
-
+        else:
+            logger.info("DiaTracer installed: %s", jar_path)
     return success
 
 

@@ -123,6 +123,7 @@ class SageRunner(BaseRunner):
             "min_len":          p["min_len"],
             "max_len":          p["max_len"],
             "c_terminal":       p["enzyme_c_terminal"],
+            "semi_enzymatic":   False,
         }
         if p.get("enzyme_restrict"):
             enzyme["restrict"] = p["enzyme_restrict"]

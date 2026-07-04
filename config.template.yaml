@@ -55,8 +55,14 @@ search_params:
 
   # Enzyme used for in-silico digestion.
   # Supported values: trypsin | trypsin/p | lysc | gluc | aspn | argc |
-  #                   chymotrypsin | non-specific
+  #                   chymotrypsin | non-specific | no-cleave
   # "trypsin/p" = trypsin allowing cleavage before proline (less stringent).
+  # "no-cleave" = do not digest further; each FASTA entry is searched as-is.
+  #               Use this for a pre-digested/peptide-level FASTA (e.g. the
+  #               Entrapment module's entrapment peptide database) so tools
+  #               don't cut those peptides into smaller fragments. Entries
+  #               containing a non-standard residue (X/B/J/U/O/Z) are silently
+  #               dropped by some tools (e.g. DIA-NN) since their mass is unknown.
   enzyme: trypsin/p
 
   # Maximum number of missed cleavage sites per peptide.

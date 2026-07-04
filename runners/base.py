@@ -98,8 +98,15 @@ ENZYME_MAP = {
                      "sage_c_terminal": False, "maxquant": "AspN", "metamorpheus": "Asp-N"},
     "argc":         {"diann": "R*",    "alphadia": "arg-c",    "sage_cleave_at": "R",  "sage_restrict": None,
                      "sage_c_terminal": True, "maxquant": "ArgC", "metamorpheus": "Arg-C"},
-    "non-specific": {"diann": "**",     "alphadia": "non-specific", "sage_cleave_at": "*", "sage_restrict": None,
+    "non-specific": {"diann": "**",     "alphadia": "non-specific", "sage_cleave_at": "", "sage_restrict": None,
                      "sage_c_terminal": True, "maxquant": "unspecific", "metamorpheus": "non-specific"},
+    # No additional in-silico digestion: each FASTA entry is used as-is (e.g. a
+    # pre-digested/peptide-level FASTA, such as the Entrapment module's entrapment
+    # peptide database). diann: "" (empty --cut rule) verified empirically to return
+    # each entry unsplit, as long as the entry contains only standard amino acids —
+    # an ambiguous residue (X/Z/B/J/U/O) anywhere in an entry silently drops it.
+    "no-cleave":    {"diann": "",         "alphadia": "no-cleave",    "sage_cleave_at": "$", "sage_restrict": None,
+                     "sage_c_terminal": True, "maxquant": None, "metamorpheus": "peptidomics"},
 }
 
 

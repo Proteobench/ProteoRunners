@@ -135,11 +135,35 @@ class MaxQuantRunner(BaseRunner):
         # parameterGroup enzyme lists to the configured enzyme.
         p = self.map_params()
         enzyme_name = p["enzyme"]
-        for enzymes_el in root.findall('.//parameterGroup/enzymes'):
-            strings = enzymes_el.findall('string')
-            if len(strings) == 1 and strings[0].text != enzyme_name:
-                strings[0].text = enzyme_name
+        if enzyme_name is None:
+            # "no-cleave": FASTA entries are already final peptides (e.g. a
+            # pre-digested Entrapment database). MaxQuant's dedicated enzymeMode=5
+            # ("No cleavage") treats each entry as one peptide, no digestion —
+            # confirmed via MqUtil.dll's EnzymeMode enum (Specific=0 ... None=5).
+            # It reads peptide length bounds from *ForUnspecificSearch, not
+            # minPeptideLength/maxPeptideLength.
+            for enzymes_el in root.findall('.//parameterGroup/enzymes'):
+                for child in list(enzymes_el):
+                    enzymes_el.remove(child)
                 dirty = True
+            for mode_el in root.findall('.//parameterGroup/enzymeMode'):
+                if mode_el.text != "5":
+                    mode_el.text = "5"
+                    dirty = True
+            for lo_el in root.findall('.//minPeptideLengthForUnspecificSearch'):
+                if lo_el.text != str(p["min_peptide_length"]):
+                    lo_el.text = str(p["min_peptide_length"])
+                    dirty = True
+            for hi_el in root.findall('.//maxPeptideLengthForUnspecificSearch'):
+                if hi_el.text != str(p["max_peptide_length"]):
+                    hi_el.text = str(p["max_peptide_length"])
+                    dirty = True
+        else:
+            for enzymes_el in root.findall('.//parameterGroup/enzymes'):
+                strings = enzymes_el.findall('string')
+                if len(strings) == 1 and strings[0].text != enzyme_name:
+                    strings[0].text = enzyme_name
+                    dirty = True
 
         # --- 4. set fragment mass tolerance ---
         # msmsParamsArray contains one entry per MS2 type (FTMS, ITMS, etc.).

@@ -27,6 +27,7 @@ _FP_ENZYME: dict[str, tuple[str, str, str, str]] = {
     "aspn":         ("aspn",         "D",  "", "N"),
     "argc":         ("argc",         "R",  "P", "C"),
     "non-specific": ("nonspecific",   "@",  "",  "C"),
+    "no-cleave":    ("nocleavage",    "@",  "@", "C"),
 }
 
 # Fixed mod table residue order (MSFragger canonical order)
@@ -182,6 +183,20 @@ class FragPipeRunner(BaseRunner):
         if not workflow_file.exists():
             errors.append(f"Workflow file not found: {workflow_file}")
 
+        python = self.global_cfg.get("python", "python3")
+        import subprocess as _sp
+        r = _sp.run(
+            [str(python), "-c", "import easypqp"],
+            capture_output=True,
+        )
+        if r.returncode != 0:
+            errors.append(
+                f"FragPipe spectral library generation requires 'easypqp' (fragpipe-speclib) "
+                f"in the Python configured as global.python ({python}). "
+                f"Fix: pip install fragpipe-speclib   using that Python, "
+                f"or point global.python to a Python that already has it."
+            )
+
         return errors
 
     def map_params(self) -> dict:
@@ -310,9 +325,10 @@ class FragPipeRunner(BaseRunner):
         return [
             str(launcher),
             "--headless",
-            "--workflow",      str(workflow_path),
-            "--manifest",      str(manifest_path),
-            "--workdir",       str(output_dir),
-            "--threads",       str(threads),
-            "--config-python", str(python),
+            "--workflow",            str(workflow_path),
+            "--manifest",            str(manifest_path),
+            "--workdir",             str(output_dir),
+            "--threads",             str(threads),
+            "--config-tools-folder", str(fp_dir / "tools"),
+            "--config-python",       str(python),
         ]

@@ -9,3 +9,5 @@ __pycache__/
 ProteoBench/
 configs/
 .nextflow/
+work/
+*nextflow.log*

@@ -2,7 +2,7 @@
 
 Supported search_params keys:
   fdr_psm (→ fdr.fdr), match_between_runs (→ search.mbr_step_enabled),
-  normalize (→ search_output.normalize_lfq),
+  normalize (→ search_output.normalize_directlfq),
   precursor_mass_tolerance_ppm, fragment_mass_tolerance_ppm,
   missed_cleavages, min_peptide_length, max_peptide_length,
   fixed_mods, variable_mods,
@@ -46,6 +46,15 @@ class AlphaDIARunner(BaseRunner):
                     f"alphaDIA command not found: {cmd}. "
                     "Install with: pip install alphadia   then run: which alphadia"
                 )
+            return errors
+        # Verify the binary actually starts before the slower peptdeep check.
+        r_ver = subprocess.run([cmd, "--version"], capture_output=True, timeout=30)
+        if r_ver.returncode != 0:
+            stderr = (r_ver.stderr or r_ver.stdout).decode(errors="replace")[-500:]
+            errors.append(
+                f"alphaDIA binary exists but failed to start — Python environment may be broken:\n{stderr}\n"
+                f"Fix: activate the alphaDIA environment and run: pip install alphadia"
+            )
             return errors
         # Pre-download peptdeep models so parallel jobs don't race on the same cache file.
         python = str(Path(cmd).parent / "python")
@@ -134,7 +143,7 @@ class AlphaDIARunner(BaseRunner):
                 "extraction_backend": "python" if self.dataset_cfg.get("format") == "d" else "rust",
             },
             "fdr": {"fdr": p["fdr_psm"]},
-            "search_output": {"normalize_lfq": p["normalize_lfq"]},
+            "search_output": {"normalize_directlfq": p["normalize_lfq"]},
         }
 
         cfg = {k: v for k, v in cfg.items() if v is not None}

@@ -8,6 +8,11 @@ Supported search_params keys:
   fixed_mods, variable_mods,
   min_charge, max_charge, precursor_mz_range, fragment_mz_range
 
+Tool-specific `extra:` keys (alphaDIA only):
+  library, precursor_mass_tolerance_ppm_initial (→ search_initial.ms1_tolerance),
+  fragment_mass_tolerance_ppm_initial (→ search_initial.ms2_tolerance),
+  transfer_learning (→ general.transfer_step_enabled)
+
 Not mapped (alphaDIA has no separate peptide/protein FDR; no max_mods_per_peptide config key):
   fdr_peptide, fdr_protein, max_mods_per_peptide
 """
@@ -94,6 +99,8 @@ class AlphaDIARunner(BaseRunner):
             "precursor_mz":    precursor_mz,
             "fragment_mz":     fragment_mz,
             "fdr_psm":         sp.get("fdr_psm", 0.01),
+            "fdr_peptide":      sp.get("fdr_peptide", 0.01),
+            "fdr_protein":      sp.get("fdr_protein", 0.01),
             "max_var_mod_num": sp.get("max_mods_per_peptide", 2),
             "fixed_mods":      fixed_mods,
             "var_mods":        var_mods,
@@ -102,11 +109,21 @@ class AlphaDIARunner(BaseRunner):
             "mbr":             sp.get("match_between_runs", False),
             "normalize_lfq":   sp.get("normalize", True),
         }
+        
+    def _decide_fdr_group_level(self, p: dict) -> str:
+        """Determine the FDR group level for alphaDIA based on the search parameters."""
+        if p["fdr_protein"] is not None:
+            return "proteins", p["fdr_protein"]
+        elif p["fdr_peptide"] is not None:
+            return "peptides", p["fdr_peptide"]
+        else:
+            return "precursors", p["fdr_psm"]
 
     def _write_alphadia_config(self, input_files: list[Path], fasta: Path, output_dir: Path) -> Path:
         p = self.map_params()
         threads = self.global_cfg.get("threads_per_job", 16)
         library = (self.extra or {}).get("library", "")
+        fdr_group_level, fdr_value = self._decide_fdr_group_level(p)
 
         cfg: dict = {
             "raw_paths":        [str(f) for f in input_files],
@@ -116,6 +133,7 @@ class AlphaDIARunner(BaseRunner):
             "general": {
                 "thread_count":      threads,
                 "mbr_step_enabled":  p["mbr"],
+                "transfer_step_enabled": bool(self.extra.get("transfer_learning", False)),
             },
             "library_prediction": {
                 "enabled":                not bool(library),
@@ -129,10 +147,6 @@ class AlphaDIARunner(BaseRunner):
                 "precursor_mz":           p["precursor_mz"],
                 "fragment_mz":            p["fragment_mz"],
             },
-            "search_initial": {
-                "ms1_tolerance": p["precursor_tol"],
-                "ms2_tolerance": p["fragment_tol"],
-            },
             # target_ms1/ms2_tolerance: final search tolerances that AlphaDIA logs and
             # ProteoBench reads back (CONFIG_KEY_MAPPER). Set explicitly so calibration
             # does not override the benchmark value.
@@ -142,9 +156,21 @@ class AlphaDIARunner(BaseRunner):
                 # Rust backend does not support Bruker .d format; fall back to Python.
                 "extraction_backend": "python" if self.dataset_cfg.get("format") == "d" else "rust",
             },
-            "fdr": {"fdr": p["fdr_psm"]},
+            "fdr": {"fdr": fdr_value, "group_level": fdr_group_level},
             "search_output": {"normalize_directlfq": p["normalize_lfq"]},
         }
+
+        # Optional tool-specific initial (pre-calibration) tolerances from the
+        # alphadia `extra:` block. Only emitted when set, so AlphaDIA's own
+        # defaults apply otherwise.
+        initial = {
+            k: v for k, v in (
+                ("ms1_tolerance", self.extra.get("precursor_mass_tolerance_ppm_initial")),
+                ("ms2_tolerance", self.extra.get("fragment_mass_tolerance_ppm_initial")),
+            ) if v is not None
+        }
+        if initial:
+            cfg["search_initial"] = initial
 
         cfg = {k: v for k, v in cfg.items() if v is not None}
 

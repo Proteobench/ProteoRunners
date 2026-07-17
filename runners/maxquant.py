@@ -7,8 +7,14 @@ Supported search_params keys:
   fixed_mods, variable_mods, max_mods_per_peptide,
   min_charge, max_charge
 
-Not mapped (MaxQuant does not expose precursor/fragment m/z range as simple CLI params):
-  precursor_mz_range, fragment_mz_range
+min_charge/max_charge are applied to feature-detection maxCharge and, for DIA
+groups, diaMinCharge/diaMaxCharge. max_mods_per_peptide sets both maxNmods and
+(for DIA groups) diaMaxModifications.
+
+precursor_mz_range upper bound → diaMaxPrecursorMz (DIA groups).
+
+Not mapped:
+  precursor_mz_range lower bound, fragment_mz_range (MaxQuant exposes no matching param)
 """
 
 from __future__ import annotations
@@ -80,6 +86,7 @@ class MaxQuantRunner(BaseRunner):
             "normalize":            sp.get("normalize", True),
             "min_charge":           sp.get("min_charge", 2),
             "max_charge":           sp.get("max_charge", 4),
+            "precursor_mz_max":     sp.get("precursor_mz_range", [0.0, 0.0])[1],
         }
 
     def _patch_mqpar(self, mqpar: Path, input_files: list[Path]) -> None:
@@ -187,6 +194,70 @@ class MaxQuantRunner(BaseRunner):
             if lfq_el is not None and lfq_el.text != lfq_norm:
                 lfq_el.text = lfq_norm
                 dirty = True
+
+        # --- 6. fixed and variable modifications ---
+        # --create writes MaxQuant's own default variable mods (Oxidation (M) +
+        # Acetyl (Protein N-term)); without this, unconfigured mods (notably
+        # Acetyl) silently widen the search. Overwrite both lists from config.
+        # restrictMods (mods excluded from protein-quantification peptides)
+        # defaults to the variable-mod list, so keep it in sync.
+        def _set_string_list(parent, tag, values):
+            nonlocal dirty
+            el = parent.find(tag)
+            if el is None:
+                return
+            if [c.text for c in el.findall('string')] == list(values):
+                return
+            for c in list(el):
+                el.remove(c)
+            for v in values:
+                ET.SubElement(el, 'string').text = v
+            dirty = True
+
+        for pg in root.findall('.//parameterGroup'):
+            _set_string_list(pg, 'fixedModifications', p["fixed_mods"])
+            _set_string_list(pg, 'variableModifications', p["var_mods"])
+        _set_string_list(root, 'restrictMods', p["var_mods"])
+
+        # --- 7b. MBR matching/alignment windows ---
+        # --create leaves these at 0; enabling matchBetweenRuns via
+        # --changeParameter does not populate them, so MBR would run with a
+        # zero-width matching window and transfer nothing. Set MaxQuant's
+        # standard windows when MBR is on (ion-mobility windows only bite on
+        # PASEF data, harmless otherwise).
+        if p["mbr"]:
+            for tag, val in (('matchingTimeWindow', '0.4'),
+                             ('matchingIonMobilityWindow', '0.05'),
+                             ('alignmentTimeWindow', '20'),
+                             ('alignmentIonMobilityWindow', '1')):
+                el = root.find(f'.//{tag}')
+                if el is not None and el.text != val:
+                    el.text = val
+                    dirty = True
+
+        # --- 7. charge range and max modifications ---
+        # From search_params: max_charge → feature-detection maxCharge and DIA
+        # diaMaxCharge; min_charge → diaMinCharge; max_mods_per_peptide →
+        # diaMaxModifications (DIA library), alongside maxNmods set via
+        # --changeParameter. diaMinCharge/diaMaxCharge/diaMaxModifications exist
+        # only in DIA parameterGroups; maxCharge in all.
+        mz_max = p["precursor_mz_max"]
+        mz_max_str = str(int(mz_max)) if float(mz_max).is_integer() else str(mz_max)
+        for pg in root.findall('.//parameterGroup'):
+            for tag, val in (('maxCharge', str(p["max_charge"])),
+                             ('diaMinCharge', str(p["min_charge"])),
+                             ('diaMaxCharge', str(p["max_charge"])),
+                             ('diaMaxModifications', str(p["max_mods"])),
+                             # DIA initial precursor/fragment mass tolerances
+                             # from precursor/fragment_mass_tolerance_ppm.
+                             ('diaInitialPrecMassTolPpm', str(p["precursor_tol_ppm"])),
+                             ('diaInitialFragMassTolPpm', str(p["fragment_tol_ppm"])),
+                             # upper bound of precursor_mz_range.
+                             ('diaMaxPrecursorMz', mz_max_str)):
+                el = pg.find(tag)
+                if el is not None and el.text != val:
+                    el.text = val
+                    dirty = True
 
         if dirty:
             tree.write(str(mqpar), encoding='unicode', xml_declaration=True)

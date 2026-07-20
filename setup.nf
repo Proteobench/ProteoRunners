@@ -459,6 +459,20 @@ workflow SETUP {
                     if (jar) {
                         Files.copy(jar.toPath(), new File(jarsDir, jar.name).toPath(), StandardCopyOption.REPLACE_EXISTING)
                         ok("${spec.label}: copied " + dim(jar.name))
+                        // MSFragger ships an ext/ folder (Thermo .raw + Bruker .d native
+                        // readers) next to its jar; copy it too, else MSFragger can only
+                        // read mzML. Mounted next to the jar at run time by fragpipe.py.
+                        if (spec.key == 'msfragger') {
+                            def extSrc = new File(jar.parentFile, 'ext')
+                            if (extSrc.isDirectory()) {
+                                def extDst = new File(jarsDir, 'ext')
+                                extDst.deleteDir()
+                                run(['cp', '-r', extSrc.path, extDst.path])
+                                ok('MSFragger native readers: copied ' + dim('ext/ (Thermo .raw + Bruker .d)'))
+                            } else {
+                                warn('No ext/ folder next to MSFragger — .raw/.d will not read; FragPipe will need mzML input.')
+                            }
+                        }
                     } else {
                         fail("${spec.label}: no matching .jar found in ${path} — skipping this tool for now.")
                         allFound = false

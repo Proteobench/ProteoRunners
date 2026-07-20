@@ -375,6 +375,12 @@ class FragPipeRunner(BaseRunner):
         # Bind-mount each licensed JAR onto the container's tools/ folder, next
         # to the JARs already bundled in the image (Philosopher, DIA-Umpire, ...).
         extra_mounts = [(str(jar), f"{tools_dir}/{jar.name}") for jar in self._licensed_jars()]
+        # MSFragger looks for its native readers in <jar dir>/ext (Thermo .raw via
+        # BatmassIoThermoServer.exe under mono, Bruker .d via libtimsdata). setup.nf
+        # copies that folder next to the jar; mount it so .raw/.d input works.
+        ext_dir = self._jars_dir() / "ext"
+        if ext_dir.is_dir():
+            extra_mounts.append((str(ext_dir), f"{tools_dir}/ext"))
         cmd = self.docker_run_prefix(
             self.docker_image(),
             extra_mounts=extra_mounts,

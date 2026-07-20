@@ -24,10 +24,10 @@ def load_config(path: Path) -> dict:
 
 
 def enumerate_jobs(cfg: dict, tool_filter=None, dataset_filter=None) -> list[dict]:
-    global_cfg    = cfg.get("global", {})
-    search_params = cfg.get("search_params", {})
-    datasets      = cfg.get("datasets", {})
-    tools         = cfg.get("tools", {})
+    global_cfg    = cfg.get("global") or {}
+    search_params = cfg.get("search_params") or {}
+    datasets      = cfg.get("datasets") or {}
+    tools         = cfg.get("tools") or {}
 
     jobs: list[dict] = []
     for tool_name, tool_cfg in tools.items():

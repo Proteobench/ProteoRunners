@@ -1,6 +1,8 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl = 2
 
+include { SETUP } from './setup.nf'
+
 // ─── Parameters ──────────────────────────────────────────────────────────────
 // All parameters mirror run_proteobench.py CLI flags.
 params.config          = "${projectDir}/config.yaml"
@@ -60,7 +62,36 @@ process WRITE_SUMMARY {
 
 workflow {
 
-    def configPath = new File(params.config as String).absolutePath
+    def configFile = new File(params.config as String)
+
+    // ── Setup gate: run the docker setup wizard on a first run (no config.yaml
+    // yet), or whenever an *enabled* tool's docker setup looks incomplete
+    // (missing image, missing FragPipe JARs, ...). Otherwise skip it entirely.
+    def setupOk = false
+    if (configFile.exists()) {
+        def checkProc = ["python3", "${projectDir}/config_validator.py",
+                          "--config", configFile.absolutePath, "--check-docker-setup"].execute()
+        def checkOut = new StringBuilder(), checkErr = new StringBuilder()
+        checkProc.consumeProcessOutput(checkOut, checkErr)
+        checkProc.waitFor()
+        setupOk = (checkProc.exitValue() == 0)
+        if (!setupOk) {
+            log.warn "Docker setup looks incomplete for one or more enabled tools:"
+            checkOut.toString().readLines().each { log.warn "  - ${it}" }
+        }
+    }
+
+    if (!setupOk) {
+        log.info configFile.exists() ?
+            "Re-running setup for the missing pieces above ..." :
+            "No ${configFile} yet — running first-time docker setup ..."
+        SETUP()
+        if (!configFile.exists()) {
+            error "Setup did not produce ${configFile}. See the messages above, then re-run: nextflow run proteobench.nf"
+        }
+    }
+
+    def configPath = configFile.absolutePath
 
     // ── Enumerate enabled jobs via Python ────────────────────────────────────
     def enumCmd = ["python3",

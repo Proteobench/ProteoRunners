@@ -1,5 +1,9 @@
 """MaxQuant runner.
 
+Runs inside the quay.io/medbioinf/maxquant docker image (pulled by setup.nf);
+the in-container MaxQuantCmd.dll path is recorded in 'maxquant_dll'. dotnet
+ships inside the image so no host .NET runtime is required.
+
 Supported search_params keys:
   fdr_psm, fdr_peptide, fdr_protein, match_between_runs, normalize,
   precursor_mass_tolerance_ppm, fragment_mass_tolerance_ppm,
@@ -29,13 +33,19 @@ from .base import DDA, DIA, ENZYME_MAP, MOD_REGISTRY, BaseRunner
 
 logger = logging.getLogger(__name__)
 
-# (LCMSType for DDA, LCMSType for DIA, MaxQuant instrumentType code) per instrument
-_MQ_INSTRUMENT: dict[str, tuple[str, str, str]] = {
-    "Orbitrap": ("ST",  "DIA",   "TO"),   # Standard DDA / DIA, thermoOrbi
-    "Astral":   ("ST",  "DIA",   "TA"),   # Standard DDA / DIA, thermoAstral
-    "timstof":  ("TD",  "DDIA",  "BT"),   # TIMSDDA / diaPASEF, BrukerTIMS
-    "ZenoTOF":  ("ST",  "DIA",   "SC"),   # Standard DDA / DIA, SciexTOF
-}
+# The docker image pins MaxQuant 2.6.3.0, whose MaxQuantCmd.dll has a much
+# smaller CLI than the 2.8+ syntax this runner used to target: `--create`
+# only writes a bare, single-parameterGroup template (no --LCMSType /
+# --pathFasta / --pathRawFileFolder), and `--changeParameter` does not exist
+# at all. Every field below is therefore set by editing the XML directly.
+#
+# lcmsRunType is a string-backed enum; "Standard" is confirmed (present
+# verbatim in MaxQuantLibS.dll). The DIA value used here ("DIA") is a
+# best-effort guess by naming symmetry — MaxQuantCmd's --dryrun does not
+# validate it, so an actual DIA run is the only way to confirm it; if it
+# turns out wrong, the run fails loudly with a .NET deserialization error
+# in stderr.log rather than silently mis-configuring the search.
+_MQ_LCMS_RUN_TYPE = {DDA: "Standard", DIA: "DIA"}
 
 
 class MaxQuantRunner(BaseRunner):
@@ -45,20 +55,12 @@ class MaxQuantRunner(BaseRunner):
     def tool_name(self) -> str:
         return "maxquant"
 
-    def _dotnet(self) -> str:
-        return self.global_cfg.get("dotnet", "/home/robbe/.dotnet/dotnet")
-
-    def _cmd_dll(self) -> Path:
-        return Path(self.version_cfg["dir"]) / "bin" / "MaxQuantCmd.dll"
+    def _cmd_dll(self) -> str:
+        return self.version_cfg.get("maxquant_dll", "/opt/MaxQuant/bin/MaxQuantCmd.dll")
 
     def preflight_check(self) -> list[str]:
         errors = super().preflight_check()
-        if not self._cmd_dll().exists():
-            errors.append(
-                f"MaxQuantCmd.dll not found: {self._cmd_dll()}. "
-                f"Check 'dir:' under tools > maxquant > versions > id: {self.version_id} in config.yaml. "
-                "Download MaxQuant from https://www.maxquant.org/ and extract the zip."
-            )
+        errors += self.docker_preflight()
         return errors
 
     def map_params(self) -> dict:
@@ -89,44 +91,72 @@ class MaxQuantRunner(BaseRunner):
             "precursor_mz_max":     sp.get("precursor_mz_range", [0.0, 0.0])[1],
         }
 
-    def _patch_mqpar(self, mqpar: Path, input_files: list[Path]) -> None:
-        """Patch generated mqpar.xml for compatibility.
+    def _populate_file_lists(self, root: ET.Element, input_files: list[Path]) -> None:
+        """Fill in the per-file lists a bare `--create` leaves as a single
+        placeholder entry (this version's --create has no --pathRawFileFolder
+        to auto-populate them)."""
+        # tag -> (child element name, per-file text)
+        specs = {
+            'filePaths':         ('string', lambda f: str(f)),
+            'experiments':       ('string', lambda f: f.stem),
+            'fractions':         ('short',  lambda f: '32767'),
+            'ptms':              ('boolean', lambda f: 'False'),
+            'paramGroupIndices': ('int',    lambda f: '0'),
+            'referenceChannel':  ('string', lambda f: ''),
+        }
+        for tag, (child_tag, text_fn) in specs.items():
+            el = root.find(tag)
+            if el is None:
+                continue
+            for child in list(el):
+                el.remove(child)
+            for f in input_files:
+                ET.SubElement(el, child_tag).text = text_fn(f)
 
-        1. Remove file entries not in input_files (strips _uncalibrated.mzML
-           leftovers from FragPipe that cause a NullReferenceException in
-           MaxQuant's mzML parser).
-        2. Relax identifierParseRule to accept both UniProt (two-pipe) and
-           non-UniProt headers such as Biognosys iRT entries (one pipe).
-        """
-        intended = {str(f) for f in input_files}
+    def _patch_mqpar(self, mqpar: Path, input_files: list[Path], fasta: Path) -> None:
+        """Patch the bare mqpar.xml template written by `--create` with every
+        search parameter — this MaxQuant version's CLI has no --changeParameter
+        to do this piecemeal, so everything is set directly in the XML."""
         tree = ET.parse(str(mqpar))
         root = tree.getroot()
         dirty = False
 
-        # --- 1. filter file list ---
-        file_paths_el = root.find('.//filePaths')
-        if file_paths_el is not None:
-            all_paths = [s.text or "" for s in file_paths_el.findall('string')]
-            keep_indices = [i for i, p in enumerate(all_paths) if p in intended]
-            if len(keep_indices) < len(all_paths):
-                removed = len(all_paths) - len(keep_indices)
-                logger.info("[maxquant] filtering mqpar.xml: keeping %d/%d files, removing %d",
-                            len(keep_indices), len(all_paths), removed)
-                per_file_tags = [
-                    'filePaths', 'experiments', 'fractions', 'ptms',
-                    'paramGroupIndices', 'referenceChannel',
-                ]
-                for tag in per_file_tags:
-                    el = root.find(f'.//{tag}')
-                    if el is None:
-                        continue
-                    children = list(el)
-                    for child in children:
-                        el.remove(child)
-                    for i in keep_indices:
-                        if i < len(children):
-                            el.append(children[i])
+        # --- 0. per-file lists + FASTA path + threads + acquisition type ---
+        self._populate_file_lists(root, input_files)
+        fasta_path_el = root.find('.//fastaFiles/FastaFileInfo/fastaFilePath')
+        if fasta_path_el is not None:
+            fasta_path_el.text = str(fasta)
+        threads_el = root.find('numThreads')
+        if threads_el is not None:
+            threads_el.text = str(self.global_cfg.get("threads_per_job", 16))
+        run_type = _MQ_LCMS_RUN_TYPE.get(self.acquisition, "Standard")
+        for el in root.findall('.//lcmsRunType'):
+            el.text = run_type
+        dirty = True
+
+        # --- 1. simple top-level / per-parameterGroup overrides ---
+        # (used to go through `--changeParameter`, which 2.6.3.0 does not have)
+        p = self.map_params()
+        for tag, val in (
+            ('peptideFdr', str(p["fdr_psm"])),
+            ('proteinFdr', str(p["fdr_protein"])),
+            ('matchBetweenRuns', str(p["mbr"])),
+            ('minPeptideLength', str(p["min_peptide_length"])),
+        ):
+            el = root.find(tag)
+            if el is not None and el.text != val:
+                el.text = val
                 dirty = True
+        for pg in root.findall('.//parameterGroup'):
+            for tag, val in (
+                ('maxMissedCleavages', str(p["missed_cleavages"])),
+                ('mainSearchTol', str(p["precursor_tol_ppm"])),
+                ('maxNmods', str(p["max_mods"])),
+            ):
+                el = pg.find(tag)
+                if el is not None and el.text != val:
+                    el.text = val
+                    dirty = True
 
         # --- 2. relax FASTA identifier parse rule ---
         # Default >[^|]*\|(.*?)\| requires two pipes (UniProt format) and rejects
@@ -138,9 +168,8 @@ class MaxQuantRunner(BaseRunner):
                 dirty = True
 
         # --- 3. set enzyme ---
-        # --create defaults to Trypsin/P regardless of --LCMSType; patch all
-        # parameterGroup enzyme lists to the configured enzyme.
-        p = self.map_params()
+        # --create defaults to Trypsin/P; patch all parameterGroup enzyme lists
+        # to the configured enzyme.
         enzyme_name = p["enzyme"]
         if enzyme_name is None:
             # "no-cleave": FASTA entries are already final peptides (e.g. a
@@ -263,57 +292,30 @@ class MaxQuantRunner(BaseRunner):
             tree.write(str(mqpar), encoding='unicode', xml_declaration=True)
 
     def _create_mqpar(self, input_files: list[Path], fasta: Path, output_dir: Path) -> Path:
-        p = self.map_params()
-        threads = self.global_cfg.get("threads_per_job", 16)
-        instrument = self.dataset_cfg.get("instrument", "Orbitrap")
-        dda_type, dia_type, mq_instrument = _MQ_INSTRUMENT.get(instrument, ("ST", "DIA", "TO"))
-        lcms_type = dda_type if self.acquisition == DDA else dia_type
-        dotnet = self._dotnet()
-        dll = str(self._cmd_dll())
+        dll = self._cmd_dll()
         mqpar = output_dir / "mqpar.xml"
 
-        raw_folder = input_files[0].parent
-        self._raw_folder = raw_folder  # stored for post_run_hook
+        self._raw_folder = input_files[0].parent  # stored for post_run_hook
 
-        create_cmd = [
-            dotnet, dll,
-            "--create",
-            "--newMqpar",          str(mqpar),
-            "--LCMSType",          lcms_type,
-            "--instrumentType",    mq_instrument,
-            "--pathFasta",         str(fasta),
-            "--pathRawFileFolder", str(raw_folder),
-            "--numThreads",        str(threads),
-        ]
+        # This MaxQuant version's --create refuses to overwrite an existing
+        # mqpar.xml (unlike --newMqpar in the 2.8+ CLI this used to target).
+        mqpar.unlink(missing_ok=True)
+
+        # --create takes no other arguments — it always writes the same bare,
+        # single-parameterGroup template. Every actual parameter is then set
+        # directly in the XML below.
+        create_cmd = self.docker_run_prefix(self.docker_image()) + ["dotnet", dll, str(mqpar), "--create"]
         logger.info("Creating mqpar.xml ...")
         result = subprocess.run(create_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"MaxQuantCmd --create failed:\n{result.stderr}")
 
-        self._patch_mqpar(mqpar, input_files)
-
-        # Override search parameters not exposed by --create.
-        # Syntax for MaxQuant 2.8+: dotnet dll mqpar --changeParameter param value
-        # Note: fragment tolerance lives in msmsParamsArray (nested), which --changeParameter
-        # cannot reach; it is patched directly in the XML by _patch_mqpar above.
-        # MaxQuant confusingly names the PSM-level FDR "peptideFdr" in mqpar.xml.
-        overrides = {
-            "maxMissedCleavages":  str(p["missed_cleavages"]),
-            "mainSearchTol":       str(p["precursor_tol_ppm"]),
-            "peptideFdr":          str(p["fdr_psm"]),
-            "proteinFdr":          str(p["fdr_protein"]),
-            "matchBetweenRuns":    str(p["mbr"]).lower(),
-            "maxNmods":            str(p["max_mods"]),
-            "minPeptideLength":    str(p["min_peptide_length"]),
-        }
-        for param, value in overrides.items():
-            _mq_set_param(str(mqpar), dotnet, dll, param, value)
-
+        self._patch_mqpar(mqpar, input_files, fasta)
         return mqpar
 
     def build_command(self, input_files: list[Path], fasta: Path, output_dir: Path) -> list[str]:
         mqpar = self._create_mqpar(input_files, fasta, output_dir)
-        return [self._dotnet(), str(self._cmd_dll()), str(mqpar)]
+        return self.docker_run_prefix(self.docker_image()) + ["dotnet", self._cmd_dll(), str(mqpar)]
 
     def post_run_hook(
         self, input_files: list[Path], output_dir: Path, success: bool, error_msg: str
@@ -354,10 +356,3 @@ class MaxQuantRunner(BaseRunner):
             return False, f"MaxQuant: combined/txt/peptides.txt missing or empty in {combined_dst}"
 
         return True, ""
-
-
-def _mq_set_param(mqpar: str, dotnet: str, dll: str, param: str, value: str) -> None:
-    # MaxQuant 2.8+ syntax: dotnet dll mqpar --changeParameter param value
-    r = subprocess.run([dotnet, dll, mqpar, "--changeParameter", param, value], capture_output=True)
-    if r.returncode != 0:
-        logger.warning("--changeParameter %s=%s failed (non-fatal): %s", param, value, r.stderr.decode())

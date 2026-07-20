@@ -1,0 +1,71 @@
+# Catalog of downloadable ProteoBench benchmark datasets, used only by
+# `nextflow run setup.nf` to offer automatic download + unzip. This is
+# separate from a dataset entry in config.yaml/config.template.yaml: it's
+# static, repo-owned reference data (one entry per downloadable zip), not a
+# per-user config template.
+#
+# Each zip is expected to contain, at its top level: the raw/mzML MS files,
+# exactly one *.fasta (+ optionally one decoy fasta with "decoy" in the
+# name), and optionally an mzml/ subfolder (extracted and renamed to a
+# sibling "<name>_mzml" directory by setup.nf, matching the existing
+# HYE_Astral / HYE_Astral_mzml convention already used by runners/diann.py).
+#
+# To add a new downloadable dataset, add an entry here with the real url,
+# then re-run: nextflow run setup.nf
+#
+# acquisition: DDA | DIA — format: raw | mzml | d | wiff | mgf
+# instrument (informational): Orbitrap | Astral | timstof | ZenoTOF
+
+HYE_DDA_Orbitrap:
+  url: https://proteobench.cubimed.rub.de/raws/DDA/all_data_LFQ_Quant_DDA_QExactive.tar.gz
+  acquisition: DDA
+  format: raw
+  instrument: Orbitrap
+
+HYE_DDA_Astral:
+  url: https://proteobench.cubimed.rub.de/raws/DDA-astral/all_data_LFQ_Quant_DDA_Astral.tar.gz
+  acquisition: DDA
+  format: raw
+  instrument: Astral
+
+HYE_Astral:
+  url: https://proteobench.cubimed.rub.de/raws/DIA-astral/all_data_LFQ_Quant_DIA_Astral.tar.gz
+  acquisition: DIA
+  format: raw
+  instrument: Astral
+
+HYE_Astral_Single_Cell:
+  url: https://proteobench.cubimed.rub.de/raws/DIA-SingleCell/all_data_LFQ_Quant_DIA_SC.tar.gz
+  acquisition: DIA
+  format: raw
+  instrument: Astral
+
+HYE_AIF:
+  url: https://proteobench.cubimed.rub.de/raws/DIA/all_data_LFQ_Quant_DIA_AIF.tar.gz
+  acquisition: DIA
+  format: raw
+  instrument: Orbitrap
+
+HYE_diaPASEF:
+  url: https://proteobench.cubimed.rub.de/raws/diaPASEF/all_data_LFQ_Quant_DIA_diaPASEF.tar.gz
+  acquisition: DIA
+  format: d
+  instrument: timstof
+
+HYE_ZenoSWATH:
+  url: https://proteobench.cubimed.rub.de/raws/DIA-ZenoSWATH/all_data_LFQ_Quant_DIA_ZenoSWATH.tar.gz
+  acquisition: DIA
+  format: wiff
+  instrument: ZenoTOF
+
+PYE_diaPASEF:
+  url: https://proteobench.cubimed.rub.de/raws/DIA-plasma/all_data_LFQ_Quant_DIA_Plasma.tar.gz
+  acquisition: DIA
+  format: d
+  instrument: timstof
+
+Entrapment_DIA:
+  url: https://proteobench.cubimed.rub.de/raws/DIA-astral-entrapment/all_data_Entrapment_DIA_Astral.tar.gz
+  acquisition: DIA
+  format: raw
+  instrument: Orbitrap

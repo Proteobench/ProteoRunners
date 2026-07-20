@@ -16,6 +16,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_image_present_cache: dict[str, bool] = {}
+
+
+def docker_image_present(image: str) -> bool:
+    """Return True if a docker image is already pulled locally."""
+    if image not in _image_present_cache:
+        r = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
+        _image_present_cache[image] = r.returncode == 0
+    return _image_present_cache[image]
+
 # Acquisition types recognised throughout the pipeline
 DDA = "DDA"
 DIA = "DIA"
@@ -147,6 +157,22 @@ class BaseRunner(ABC):
         self.search_params = search_params
         self.extra = tool_cfg.get("extra", {}) or {}
 
+        # Entrapment datasets ship a pre-digested, peptide-level FASTA. Any real
+        # enzyme would cut those peptides further and invalidate the entrapment
+        # results, so force 'no-cleave' regardless of the global enzyme setting.
+        # This lets users keep their enzyme of choice for other datasets in the
+        # same batch. Copy first so the shared search_params dict is not mutated
+        # for the other (non-entrapment) datasets' runners.
+        # ponytail: name-based, like infer_acquisition; add an explicit dataset
+        # flag if a non-entrapment dataset ever needs forced no-cleave.
+        if "entrapment" in dataset_name.lower() and self.search_params.get("enzyme") != "no-cleave":
+            logger.info(
+                "[%s] entrapment dataset: forcing enzyme 'no-cleave' (was %r) — "
+                "FASTA is pre-digested; global enzyme ignored for this dataset.",
+                dataset_name, self.search_params.get("enzyme"),
+            )
+            self.search_params = {**self.search_params, "enzyme": "no-cleave"}
+
     @property
     @abstractmethod
     def tool_name(self) -> str:
@@ -207,7 +233,9 @@ class BaseRunner(ABC):
             # Bruker .d directories
             return sorted(p for p in dataset_path.iterdir() if p.is_dir() and p.suffix == ".d")
         if fmt == "wiff":
-            return sorted(dataset_path.glob("*.wiff"))
+            # SCIEX: .wiff (older) and .wiff2 (ZenoTOF); companion .wiff.scan
+            # files are read by the tool alongside and are not listed here.
+            return sorted(dataset_path.glob("*.wiff")) + sorted(dataset_path.glob("*.wiff2"))
         if fmt == "mgf":
             return sorted(dataset_path.glob("*.mgf")) + sorted(dataset_path.glob("*.mgf.gz"))
         return []
@@ -227,6 +255,70 @@ class BaseRunner(ABC):
     def extra_env(self) -> dict[str, str]:
         """Override to inject extra environment variables into the subprocess."""
         return {}
+
+    # ── Docker execution helpers ──────────────────────────────────────────
+    # Every tool now runs inside its own docker image (pulled by setup.nf).
+    # We bind-mount every host path a job touches at the *same* absolute path
+    # inside the container, so tool-specific config files (mqpar.xml,
+    # sage_config.json, ...) can keep using host paths unmodified.
+
+    def docker_image(self) -> str:
+        image = self.version_cfg.get("image")
+        if not image:
+            raise RuntimeError(
+                f"tools > {self.tool_name} > versions > id: {self.version_id} has no 'image:' set. "
+                "Run: nextflow run setup.nf   to pull the required docker image."
+            )
+        return image
+
+    def _docker_host_dirs(self) -> list[str]:
+        """Host directories referenced by this job (dataset, fasta(s), output)."""
+        dirs = {
+            str(Path(self.dataset_cfg["path"]).resolve()),
+            str(Path(self.dataset_cfg["fasta"]).resolve().parent),
+            str(self._output_dir_path().resolve()),
+        }
+        if self.dataset_cfg.get("fasta_decoy"):
+            dirs.add(str(Path(self.dataset_cfg["fasta_decoy"]).resolve().parent))
+        return sorted(dirs)
+
+    def docker_run_prefix(
+        self,
+        image: str,
+        extra_mounts: list[tuple[str, str]] | None = None,
+        env: dict[str, str] | None = None,
+        gpu: bool = False,
+    ) -> list[str]:
+        """Build the `docker run ...` prefix; append the in-container command after this."""
+        cmd = ["docker", "run", "--rm", "-i", "-u", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp"]
+        if gpu:
+            cmd += ["--gpus", "all"]
+        for d in self._docker_host_dirs():
+            cmd += ["-v", f"{d}:{d}"]
+        for host, container in extra_mounts or []:
+            cmd += ["-v", f"{host}:{container}:ro"]
+        for k, v in (env or {}).items():
+            cmd += ["-e", f"{k}={v}"]
+        cmd.append(image)
+        return cmd
+
+    def docker_preflight(self) -> list[str]:
+        """Standard preflight check: docker CLI present, image pulled locally."""
+        errors: list[str] = []
+        import shutil as _shutil
+        if not _shutil.which("docker"):
+            errors.append("docker is not installed or not on PATH. Install Docker before running this pipeline.")
+            return errors
+        image = self.version_cfg.get("image", "")
+        if not image:
+            errors.append(
+                f"tools > {self.tool_name} > versions > id: {self.version_id} has no 'image:' set in config.yaml."
+            )
+        elif not docker_image_present(image):
+            errors.append(
+                f"Docker image not found locally: {image}. Run: nextflow run setup.nf   to pull it."
+            )
+        return errors
 
     def pre_run_hook(self, input_files: list[Path]) -> None:
         """Called once just before the subprocess is launched. Override for pre-run cleanup."""

@@ -11,3 +11,7 @@ configs/
 .nextflow/
 work/
 *nextflow.log*
+.env
+tools/fragpipe_jars/
+config.docker.yaml
+data/

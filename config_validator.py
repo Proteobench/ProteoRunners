@@ -7,6 +7,7 @@ Returns a list of human-readable error strings; an empty list means all checks p
 from __future__ import annotations
 
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -36,15 +37,39 @@ def _suggest_path(path_str: str) -> str:
     return ""
 
 
+def docker_setup_errors(cfg: dict) -> list[str]:
+    """Check only the docker/tool-installation side of config.yaml: is docker
+    itself available, and does every *enabled* tool version have its image
+    pulled and its tool-specific extras (FragPipe JARs, in-container paths)
+    in place? Deliberately excludes dataset/search_params checks — this is
+    used by proteobench.nf to decide whether setup.nf needs to run again,
+    and a missing dataset path is not something setup can fix.
+    """
+    errors: list[str] = []
+    if not shutil.which("docker"):
+        errors.append("docker is not installed or not on PATH.")
+        return errors
+
+    for tool_name, tool_cfg in (cfg.get("tools") or {}).items():
+        if not isinstance(tool_cfg, dict):
+            continue
+        for i, ver in enumerate(tool_cfg.get("versions", [])):
+            if not isinstance(ver, dict) or not ver.get("enabled", False):
+                continue
+            ver_prefix = f"tools > {tool_name} > id: {ver.get('id', f'index {i}')}"
+            _validate_tool_docker(tool_name, ver, ver_prefix, errors)
+    return errors
+
+
 def validate_config(cfg: dict, config_path: Path) -> list[str]:
     errors: list[str] = []
 
     # 1. Required top-level sections
     for section in ("global", "search_params", "datasets", "tools"):
-        if section not in cfg:
+        if cfg.get(section) is None:
             errors.append(
-                f"Missing required section '{section}' in {config_path}. "
-                f"Check that config.yaml has a '{section}:' block."
+                f"Missing or empty required section '{section}' in {config_path}. "
+                f"Check that config.yaml has a '{section}:' block with content under it."
             )
     if errors:
         # Cannot safely continue without the basic structure
@@ -72,12 +97,10 @@ def _validate_global(g: dict, config_path: Path, errors: list[str]) -> None:
             "Replace it with a real path on your system."
         )
 
-    dotnet = g.get("dotnet", "dotnet")
-    if dotnet and dotnet != "dotnet" and not Path(dotnet).exists():
-        hint = _suggest_path(dotnet)
+    if not shutil.which("docker"):
         errors.append(
-            f"global.dotnet not found: {dotnet}{hint}. "
-            "Set to 'dotnet' if it is on your PATH, or provide the full path."
+            "docker is not installed or not on PATH. Every tool now runs in a docker "
+            "container — install Docker before running this pipeline."
         )
 
     for key in ("max_parallel_jobs", "threads_per_job"):
@@ -210,132 +233,89 @@ def _validate_tools(
             if not ver.get("enabled", False):
                 continue  # skip path checks for disabled versions
 
-            _validate_tool_binary(tool_name, ver, ver_prefix, errors)
+            _validate_tool_docker(tool_name, ver, ver_prefix, errors)
 
 
-def _validate_tool_binary(
+def _docker_image_present(image: str) -> bool:
+    r = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
+    return r.returncode == 0
+
+
+def _validate_tool_docker(
     tool_name: str, ver: dict, ver_prefix: str, errors: list[str]
 ) -> None:
-    """Check that the binary/dir/command for an enabled tool version exists."""
+    """Check that the docker image (and any tool-specific extras) for an enabled version exist."""
+
+    image = ver.get("image", "")
+    if not image:
+        errors.append(
+            f"{ver_prefix}: 'image' is missing. Run: nextflow run setup.nf   to pull it."
+        )
+        return
+    if "CHANGE_ME" in image:
+        errors.append(f"{ver_prefix}: 'image' still contains 'CHANGE_ME'.")
+        return
+    if shutil.which("docker") and not _docker_image_present(image):
+        errors.append(
+            f"{ver_prefix}: docker image not pulled locally: {image}. "
+            "Run: nextflow run setup.nf   to pull it."
+        )
 
     if tool_name == "diann":
-        binary = ver.get("binary", "")
-        if not binary:
-            errors.append(f"{ver_prefix}: 'binary' is missing. Set the path to the DIA-NN executable.")
-        elif "CHANGE_ME" in binary:
+        diann_bin = ver.get("diann_bin", "")
+        if not diann_bin or "CHANGE_ME" in diann_bin:
             errors.append(
-                f"{ver_prefix}: 'binary' still contains 'CHANGE_ME'. "
-                "Run: python setup.py --download-diann   to download automatically."
-            )
-        elif not Path(binary).exists():
-            hint = _suggest_path(binary)
-            errors.append(
-                f"{ver_prefix}: DIA-NN binary not found: {binary}{hint}. "
-                "Check 'binary:' under tools > diann > versions in config.yaml. "
-                "Run: python setup.py --download-diann   to download automatically."
-            )
-
-    elif tool_name == "alphadia":
-        command = ver.get("command", "")
-        if not command:
-            errors.append(
-                f"{ver_prefix}: 'command' is missing. "
-                "Install AlphaDIA with: pip install alphadia   then run: which alphadia"
-            )
-        elif "CHANGE_ME" in command:
-            errors.append(
-                f"{ver_prefix}: 'command' still contains 'CHANGE_ME'. "
-                "Run 'which alphadia' after installation and set that path here."
-            )
-        elif not Path(command).exists():
-            found = shutil.which("alphadia")
-            if found:
-                errors.append(
-                    f"{ver_prefix}: AlphaDIA command not found at {command}. "
-                    f"Found 'alphadia' on PATH at {found} — update config.yaml."
-                )
-            else:
-                errors.append(
-                    f"{ver_prefix}: AlphaDIA command not found: {command}. "
-                    "Install with: pip install alphadia"
-                )
-
-    elif tool_name == "sage":
-        binary = ver.get("binary", "")
-        source_dir = ver.get("source_dir", "")
-        if not binary and not source_dir:
-            errors.append(
-                f"{ver_prefix}: set either 'binary' (compiled path) or 'source_dir' "
-                "(Sage git repository for compilation via setup.py --sage-only)."
-            )
-        elif binary and "CHANGE_ME" in binary:
-            errors.append(
-                f"{ver_prefix}: 'binary' still contains 'CHANGE_ME'. "
-                "Set 'source_dir' to the Sage git repo and run: python setup.py --sage-only"
-            )
-        elif binary and not Path(binary).exists():
-            errors.append(
-                f"{ver_prefix}: Sage binary not found: {binary}. "
-                "Compile it with: python setup.py --sage-only"
+                f"{ver_prefix}: 'diann_bin' is missing or still 'CHANGE_ME'. "
+                "Run: nextflow run setup.nf   to detect the in-container binary path."
             )
 
     elif tool_name == "fragpipe":
-        fp_dir = ver.get("dir", "")
-        msfragger_jar = ver.get("msfragger_jar", "")
-        if not fp_dir:
-            errors.append(f"{ver_prefix}: 'dir' is missing. Set it to the FragPipe installation directory.")
-        elif "CHANGE_ME" in fp_dir:
+        fragpipe_root = ver.get("fragpipe_root", "")
+        if not fragpipe_root or "CHANGE_ME" in fragpipe_root:
             errors.append(
-                f"{ver_prefix}: 'dir' still contains 'CHANGE_ME'. "
-                "Download FragPipe from https://github.com/Nesvilab/FragPipe/releases"
+                f"{ver_prefix}: 'fragpipe_root' is missing or still 'CHANGE_ME'. "
+                "Run: nextflow run setup.nf   to detect the in-container FragPipe path."
             )
-        elif not Path(fp_dir).is_dir():
+        jars_dir = ver.get("jars_dir", "")
+        if not jars_dir or "CHANGE_ME" in jars_dir:
             errors.append(
-                f"{ver_prefix}: FragPipe directory not found: {fp_dir}. "
-                "Check 'dir:' under tools > fragpipe > versions in config.yaml."
+                f"{ver_prefix}: 'jars_dir' is missing or still 'CHANGE_ME'. "
+                "Run: nextflow run setup.nf   to collect the licensed MSFragger/IonQuant/diaTracer JARs."
             )
-        if not msfragger_jar:
-            errors.append(
-                f"{ver_prefix}: 'msfragger_jar' is empty. "
-                "Run: python setup.py --accept-license   to download MSFragger automatically."
-            )
-        elif "CHANGE_ME" in msfragger_jar:
-            errors.append(
-                f"{ver_prefix}: 'msfragger_jar' still contains 'CHANGE_ME'. "
-                "Run: python setup.py --accept-license"
-            )
-        elif not Path(msfragger_jar).exists():
-            errors.append(
-                f"{ver_prefix}: MSFragger JAR not found: {msfragger_jar}. "
-                "Run: python setup.py --accept-license"
-            )
+        else:
+            found = {p.name.lower() for p in Path(jars_dir).glob("*.jar")} if Path(jars_dir).is_dir() else set()
+            for label, needle in (("MSFragger", "msfragger"), ("IonQuant", "ionquant"), ("diaTracer", "diatracer")):
+                if not any(needle in n for n in found):
+                    errors.append(
+                        f"{ver_prefix}: {label} JAR not found in jars_dir ({jars_dir}). "
+                        "Run: nextflow run setup.nf   to add it (or disable FragPipe)."
+                    )
 
-    elif tool_name == "maxquant":
-        mq_dir = ver.get("dir", "")
-        if not mq_dir:
-            errors.append(f"{ver_prefix}: 'dir' is missing. Set it to the MaxQuant installation directory.")
-        elif "CHANGE_ME" in mq_dir:
-            errors.append(
-                f"{ver_prefix}: 'dir' still contains 'CHANGE_ME'. "
-                "Download MaxQuant from https://www.maxquant.org/ and extract the zip."
-            )
-        elif not Path(mq_dir).is_dir():
-            errors.append(
-                f"{ver_prefix}: MaxQuant directory not found: {mq_dir}. "
-                "Check 'dir:' under tools > maxquant > versions in config.yaml."
-            )
 
-    elif tool_name == "metamorpheus":
-        mm_dir = ver.get("dir", "")
-        if not mm_dir:
-            errors.append(f"{ver_prefix}: 'dir' is missing. Set it to the MetaMorpheus installation directory.")
-        elif "CHANGE_ME" in mm_dir:
-            errors.append(
-                f"{ver_prefix}: 'dir' still contains 'CHANGE_ME'. "
-                "Download MetaMorpheus from https://github.com/smith-chem-wisc/MetaMorpheus/releases"
-            )
-        elif not Path(mm_dir).is_dir():
-            errors.append(
-                f"{ver_prefix}: MetaMorpheus directory not found: {mm_dir}. "
-                "Check 'dir:' under tools > metamorpheus > versions in config.yaml."
-            )
+# ── CLI: used by proteobench.nf to decide whether setup.nf needs to run ──────
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    import yaml
+
+    parser = argparse.ArgumentParser(description="Check config.yaml completeness.")
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument(
+        "--check-docker-setup", action="store_true",
+        help="Only check docker/tool installation (images, FragPipe JARs), not datasets or search_params.",
+    )
+    args = parser.parse_args()
+
+    if not args.config.exists():
+        print(f"Config file not found: {args.config}")
+        sys.exit(1)
+
+    with open(args.config) as f:
+        loaded_cfg = yaml.safe_load(f)
+
+    found_errors = docker_setup_errors(loaded_cfg) if args.check_docker_setup else validate_config(loaded_cfg, args.config)
+    for e in found_errors:
+        print(e)
+    sys.exit(1 if found_errors else 0)

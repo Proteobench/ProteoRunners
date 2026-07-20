@@ -1,5 +1,9 @@
 """MetaMorpheus runner.
 
+Runs inside the smithchemwisc/metamorpheus docker image (pulled by setup.nf).
+That image's ENTRYPOINT is already `dotnet /MetaMorpheus/CMD.dll`, so the
+docker command only needs the usual CMD.dll arguments appended.
+
 Supported search_params keys:
   fdr_psm (→ QValueThreshold), match_between_runs (→ MatchBetweenRuns),
   normalize (→ Normalize), precursor_mass_tolerance_ppm,
@@ -38,16 +42,9 @@ class MetaMorpheusRunner(BaseRunner):
     def tool_name(self) -> str:
         return "metamorpheus"
 
-    def _dotnet(self) -> str:
-        return self.global_cfg.get("dotnet", "/home/robbe/.dotnet/dotnet")
-
-    def _cmd_dll(self) -> Path:
-        return Path(self.version_cfg["dir"]) / "CMD.dll"
-
     def preflight_check(self) -> list[str]:
         errors = super().preflight_check()
-        if not self._cmd_dll().exists():
-            errors.append(f"MetaMorpheus CMD.dll not found: {self._cmd_dll()}")
+        errors += self.docker_preflight()
         return errors
 
     def map_params(self) -> dict:
@@ -147,10 +144,11 @@ FragmentationTerminus = "Both"
 
     def build_command(self, input_files: list[Path], fasta: Path, output_dir: Path) -> list[str]:
         task_path = self._write_search_task(output_dir)
-        return [
-            self._dotnet(), str(self._cmd_dll()),
+        cmd = self.docker_run_prefix(self.docker_image())
+        cmd += [
             "-t", str(task_path),
             "-d", str(fasta),
             "-s", *[str(f) for f in input_files],
             "-o", str(output_dir),
         ]
+        return cmd

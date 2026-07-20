@@ -1,5 +1,8 @@
 """Sage runner.
 
+Runs inside the ghcr.io/lazear/sage docker image (pulled by setup.nf); the
+in-container binary lives at the path recorded in 'sage_bin' (default /app/sage).
+
 Supported search_params keys:
   fdr_psm (→ protein_grouping_peptide_fdr; Sage uses one FDR threshold),
   precursor_mass_tolerance_ppm, fragment_mass_tolerance_ppm,
@@ -17,28 +20,11 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 from pathlib import Path
 
 from .base import DDA, ENZYME_MAP, MOD_REGISTRY, BaseRunner
 
 logger = logging.getLogger(__name__)
-
-
-def _compile_sage(source_dir: Path, git_tag: str = "") -> bool:
-    if git_tag:
-        logger.info("Checking out Sage tag %s", git_tag)
-        r = subprocess.run(["git", "-C", str(source_dir), "checkout", git_tag], capture_output=True)
-        if r.returncode != 0:
-            logger.error("git checkout %s failed: %s", git_tag, r.stderr.decode())
-            return False
-
-    logger.info("Compiling Sage in %s ...", source_dir)
-    r = subprocess.run(
-        ["cargo", "build", "--release", "--manifest-path", str(source_dir / "Cargo.toml")],
-        capture_output=False,
-    )
-    return r.returncode == 0
 
 
 class SageRunner(BaseRunner):
@@ -48,20 +34,12 @@ class SageRunner(BaseRunner):
     def tool_name(self) -> str:
         return "sage"
 
+    def _sage_bin(self) -> str:
+        return self.version_cfg.get("sage_bin", "/app/sage")
+
     def preflight_check(self) -> list[str]:
         errors = super().preflight_check()
-        binary = Path(self.version_cfg["binary"])
-        source_dir = self.version_cfg.get("source_dir", "")
-
-        if not binary.exists():
-            if source_dir and Path(source_dir).exists():
-                git_tag = self.version_cfg.get("git_tag", "")
-                logger.info("Sage binary not found; compiling from %s", source_dir)
-                ok = _compile_sage(Path(source_dir), git_tag)
-                if not ok or not binary.exists():
-                    errors.append(f"Sage compilation failed; binary not found at {binary}")
-            else:
-                errors.append(f"Sage binary not found and no source_dir set: {binary}")
+        errors += self.docker_preflight()
 
         fmt = self.dataset_cfg["format"]
         if fmt not in ("mzml", "mgf"):
@@ -162,10 +140,10 @@ class SageRunner(BaseRunner):
 
     def build_command(self, input_files: list[Path], fasta: Path, output_dir: Path) -> list[str]:
         config_path = self._write_sage_config(input_files, fasta, output_dir)
-        binary  = str(self.version_cfg["binary"])
         threads = self.global_cfg.get("threads_per_job", 16)
 
-        cmd = [binary, "--batch-size", str(threads), str(config_path)]
+        cmd = self.docker_run_prefix(self.docker_image())
+        cmd += [self._sage_bin(), "--batch-size", str(threads), str(config_path)]
 
         extra = self.extra or {}
         if extra.get("parquet"):

@@ -59,6 +59,20 @@ _MQPAR_TEMPLATE = """<?xml version="1.0"?>
 """
 
 
+def test_entrapment_forces_no_cleave():
+    sp = {"enzyme": "trypsin/p"}
+    common = dict(
+        tool_cfg={"extra": {}}, dataset_cfg={}, version_cfg={"id": "x"},
+        global_cfg={}, search_params=sp,
+    )
+    ent = DIANNRunner(dataset_name="Entrapment_DIA", **common)
+    assert ent.search_params["enzyme"] == "no-cleave"
+    # shared dict untouched, so other datasets keep the user's enzyme
+    assert sp["enzyme"] == "trypsin/p"
+    other = DIANNRunner(dataset_name="HYE_Astral", **common)
+    assert other.search_params["enzyme"] == "trypsin/p"
+
+
 def test_maxquant_patches_no_cleavage_mode():
     with tempfile.TemporaryDirectory() as tmp:
         mqpar = Path(tmp) / "mqpar.xml"
@@ -69,7 +83,9 @@ def test_maxquant_patches_no_cleavage_mode():
             "enzyme": "no-cleave", "min_peptide_length": 6, "max_peptide_length": 30,
         }
         r.extra = {}
-        r._patch_mqpar(mqpar, [Path("a.raw")])
+        r.dataset_name = "Entrapment_DIA"
+        r.dataset_cfg = {"acquisition": "DIA"}
+        r._patch_mqpar(mqpar, [Path("a.raw")], Path("db.fasta"))
 
         root = ET.parse(mqpar).getroot()
         assert root.find(".//parameterGroup/enzymeMode").text == "5"
@@ -82,5 +98,6 @@ if __name__ == "__main__":
     test_enzyme_map()
     test_fragpipe_maps_official_nocleavage_enzyme()
     test_diann_maps_no_cleave_to_empty_cut()
+    test_entrapment_forces_no_cleave()
     test_maxquant_patches_no_cleavage_mode()
     print("OK")

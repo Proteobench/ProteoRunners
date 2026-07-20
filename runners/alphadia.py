@@ -1,5 +1,9 @@
 """alphaDIA runner.
 
+Runs inside the mannlabs/alphadia docker image (pulled by setup.nf); the
+'alphadia' command is on PATH in that image. Set 'gpu: true' on a version
+entry to pass --gpus all (requires the NVIDIA container toolkit on the host).
+
 Supported search_params keys:
   fdr_psm (→ fdr.fdr), match_between_runs (→ search.mbr_step_enabled),
   normalize (→ search_output.normalize_directlfq),
@@ -35,42 +39,11 @@ class AlphaDIARunner(BaseRunner):
 
     def preflight_check(self) -> list[str]:
         errors = super().preflight_check()
-        import shutil
-        import subprocess
-        cmd = self.version_cfg.get("command", "alphadia")
-        if not (shutil.which(cmd) or Path(cmd).exists()):
-            found = shutil.which("alphadia")
-            if found:
-                errors.append(
-                    f"alphaDIA command not found at {cmd!r}. "
-                    f"Found 'alphadia' on PATH at {found} — update 'command:' under "
-                    f"tools > alphadia > versions > id: {self.version_id} in config.yaml."
-                )
-            else:
-                errors.append(
-                    f"alphaDIA command not found: {cmd}. "
-                    "Install with: pip install alphadia   then run: which alphadia"
-                )
-            return errors
-        # Verify the binary actually starts before the slower peptdeep check.
-        r_ver = subprocess.run([cmd, "--version"], capture_output=True, timeout=30)
-        if r_ver.returncode != 0:
-            stderr = (r_ver.stderr or r_ver.stdout).decode(errors="replace")[-500:]
-            errors.append(
-                f"alphaDIA binary exists but failed to start — Python environment may be broken:\n{stderr}\n"
-                f"Fix: activate the alphaDIA environment and run: pip install alphadia"
-            )
-            return errors
-        # Pre-download peptdeep models so parallel jobs don't race on the same cache file.
-        python = str(Path(cmd).parent / "python")
-        r = subprocess.run(
-            [python, "-c", "from peptdeep.pretrained_models import ModelManager; ModelManager()"],
-            capture_output=True, timeout=120,
-        )
-        if r.returncode != 0:
-            errors.append(
-                f"alphaDIA: peptdeep model download/check failed:\n{r.stderr.decode(errors='replace')[-500:]}"
-            )
+        errors += self.docker_preflight()
+        # ponytail: each `docker run --rm` is a fresh container, so peptdeep
+        # re-downloads its pretrained models on every job instead of caching
+        # them once. Mount a persistent host dir at $HOME/.cache if this
+        # becomes a problem; not worth the config surface until it is.
         return errors
 
     def map_params(self) -> dict:
@@ -181,5 +154,7 @@ class AlphaDIARunner(BaseRunner):
 
     def build_command(self, input_files: list[Path], fasta: Path, output_dir: Path) -> list[str]:
         config_path = self._write_alphadia_config(input_files, fasta, output_dir)
-        command = self.version_cfg.get("command", "alphadia")
-        return [command, "--config", str(config_path)]
+        gpu = bool(self.version_cfg.get("gpu", False))
+        cmd = self.docker_run_prefix(self.docker_image(), gpu=gpu)
+        cmd += ["alphadia", "--config", str(config_path)]
+        return cmd

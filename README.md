@@ -6,107 +6,64 @@ Two equivalent runners are provided:
 
 | Runner | Entry point | Parallelism | Best for |
 |--------|------------|-------------|---------|
+| Nextflow | `proteobench.nf` | Nextflow executor (local, SLURM, …) | **Recommended** — cluster runs, reproducibility, resumable, sets itself up automatically |
 | Python | `run_proteobench.py` | `ThreadPoolExecutor` on one machine | Interactive use, dry-run preview |
-| Nextflow | `proteobench.nf` | Nextflow executor (local, SLURM, …) | Cluster runs, reproducibility, resumable |
 
-Both runners use the same `config.yaml`, the same per-tool parameter logic, and produce the same output directory layout and summary TSV.
+Both runners use the same `config.yaml`, the same per-tool parameter logic, and produce the same output directory layout and summary TSV. `proteobench.nf` is the simpler of the two to get started with: it checks its own docker setup and runs the setup wizard itself when needed, so `nextflow run proteobench.nf` is the only command most users ever need to type. The Python runner is a thinner, non-Nextflow alternative for local/interactive use; it does not run the setup wizard for you, so run `nextflow run setup.nf` once yourself before using it.
 
 ---
 
 ## Prerequisites
 
-Install the following system dependencies before running the pipeline.
+**Docker is required.** Every search engine (DIA-NN, AlphaDIA, Sage, FragPipe, MaxQuant, MetaMorpheus) now runs from a docker image — there is nothing left to compile or install natively for any tool. Install Docker before doing anything else:
 
 | Dependency | Required for | Install |
 |------------|-------------|---------|
+| **Docker** | **every tool — mandatory** | [docs.docker.com/get-docker](https://docs.docker.com/get-docker/) |
 | Python 3.11+ | Both runners | `conda install python=3.11` or [python.org](https://www.python.org/downloads/) |
-| .NET 8 runtime | MaxQuant, MetaMorpheus | `apt install dotnet-runtime-8.0` (Linux) or `winget install Microsoft.DotNet.Runtime.8` (Windows) |
-| Java 11+ | FragPipe | `apt install default-jre` or `conda install -c conda-forge openjdk` |
-| Rust / cargo | Sage (compilation) | `curl https://sh.rustup.rs -sSf \| sh` |
-| Nextflow 23.10+ | Nextflow runner only | `curl -s https://get.nextflow.io \| bash` then move to a directory on `$PATH` |
+| Nextflow 23.10+ | Nextflow runner + docker setup wizard | `curl -s https://get.nextflow.io \| bash` then move to a directory on `$PATH` |
 
 Check that each dependency is available:
 ```bash
+docker info            # should print server info, not a connection error
 python --version       # should print 3.11 or higher
-dotnet --version       # needed for MaxQuant / MetaMorpheus
-java -version          # needed for FragPipe
-cargo --version        # needed for Sage
-nextflow -version      # needed for the Nextflow runner
+nextflow -version      # needed for setup.nf and the Nextflow runner
 ```
+
+Your user must be able to run `docker` without `sudo` (on Linux: `sudo usermod -aG docker $USER`, then log out/in).
 
 ---
 
-## Quick start (Python runner)
-
-### Step 1 — Install Python dependencies
-
-```bash
-# Option A: conda 
-conda env create -f environment.yml
-conda activate proteobench-pipeline
-
-# Option B: pip (recommended)
-pip install -r requirements.txt
-```
-
-### Step 2 — Configure the pipeline
-
-```bash
-cp config.template.yaml config.yaml
-```
-
-Open `config.yaml` in a text editor and replace every `CHANGE_ME` with a real path. The template contains inline comments explaining each field. The minimum changes required:
-
-- `global.output_dir` — directory where results will be written
-- `global.dotnet` — path to the .NET runtime (or `dotnet` if it is on your PATH)
-- Paths to each tool's binary/directory under `tools`
-- Enable at least one tool version by setting `enabled: true`
-
-### Step 3 — Download third-party tool binaries
-
-Run the setup script to download MSFragger, IonQuant, DiaTracer, and DIA-NN automatically:
-
-```bash
-python setup.py          # interactive, will ask about the MSFragger license
-```
-
-For non-interactive / CI use:
-```bash
-python setup.py --accept-license          # download everything (MSFragger license accepted)
-python setup.py --download-diann          # DIA-NN only (no license needed)
-python setup.py --sage-only               # compile Sage from source (requires cargo)
-python setup.py --diatracer-only          # DiaTracer only
-```
-
-Check what is installed:
-```bash
-python setup.py --check
-```
-
-### Step 4 — Preview and run
-
-```bash
-# See which tools and datasets are configured
-python run_proteobench.py --list-tools
-python run_proteobench.py --list-datasets
-
-# Preview all planned jobs and their full CLI commands (nothing is executed)
-python run_proteobench.py --dry-run
-
-# Execute all enabled jobs
-python run_proteobench.py
-```
-
----
-
-## Quick start (Nextflow runner)
-
-Steps 1–3 above (install deps, configure, download binaries) are identical. Once that is done:
-
-### Run the pipeline
+## Quick start (Nextflow runner — recommended)
 
 ```bash
 nextflow run proteobench.nf
+```
+
+That's it — the pipeline sets itself up on the way in:
+
+- **No `config.yaml` yet?** It runs the interactive docker setup wizard first: for each tool, a yes/no prompt to pull its image, then writes straight to `config.yaml` and tells you which `CHANGE_ME` dataset paths are left to fill in. Re-run the same command once you've edited those.
+- **`config.yaml` exists and looks complete** (every enabled tool's docker image — and, for FragPipe, its licensed JARs — is actually present)? Setup is skipped entirely; it goes straight to running jobs.
+- **`config.yaml` exists but something's missing** (e.g. an image got removed, or you enabled a tool without pulling it)? It reruns the wizard for the missing pieces, writes its findings to `config.docker.yaml` (your `config.yaml` is never auto-overwritten), and still runs whatever jobs *are* configured correctly.
+
+Setup-wizard details per tool:
+
+- **MaxQuant, Sage, MetaMorpheus, AlphaDIA** — a yes/no prompt each; a plain `docker pull` if you say yes.
+- **FragPipe** — the `fcyucn/fragpipe` image does **not** include MSFragger, IonQuant, or diaTracer (Nesvilab Academic License, separate from FragPipe's own license). For each of the three, the wizard asks whether you already have it downloaded as a `.zip` or extracted folder; if not, it prints the download URL and lets you skip — FragPipe is written to the config but stays `enabled: false` until all three are present. Re-run to add them later. FragPipe also needs decoys already appended to the FASTA (unlike the other tools); if `fasta_decoy:` isn't set for a dataset, one is generated automatically the first time that dataset is searched, via the Philosopher CLI already bundled in the image (the same command the FragPipe GUI's "Add decoys" button runs), and cached next to the source FASTA for reuse.
+- **DIA-NN** — always pulls the free `biocontainers/diann:v1.8.1_cv1` image. It also asks if you have a GitHub account to pull the newer 2.x images from `ghcr.io/bigbio/diann` (see [quantms containers](https://quantmsdiann.quantms.org/containers/)), which are private and need a **GitHub personal access token** with the `read:packages` scope (create one at [github.com/settings/tokens](https://github.com/settings/tokens)). If you decline, only 1.8.1 is configured. Your username/token are saved to a git-ignored `.env` file, not written into any config.
+- **Datasets** — after the tools above are set up, the wizard offers to download benchmark datasets from `nextflow/datasets_catalog.yaml`, scoped to only the datasets relevant to the tools you just enabled (by DDA/DIA acquisition). It asks where to store them (default: `data/`, git-ignored), lists the relevant datasets, and lets you pick `all`, `none`, or specific ones by number. Each dataset is downloaded as a zip and unzipped; the FASTA (and decoy, if present) inside it are detected automatically, and an `mzml/` subfolder is split out into a sibling `<name>_mzml` dataset entry. Real, resolved paths are written into `datasets:`, and each configured tool's `datasets:` list is filled in automatically — no more `CHANGE_ME` for anything that was downloaded. Datasets already present on disk from an earlier run are reused, not re-downloaded. See "Adding a downloadable dataset" below.
+
+Non-interactive / CI use (skips all prompts, uses these flags instead):
+```bash
+nextflow run proteobench.nf --non_interactive --skip_fragpipe \
+    --diann_user YOUR_GH_USER --diann_token YOUR_GH_TOKEN \
+    --download_datasets all --data_dir /path/to/data
+```
+`--skip_datasets` skips the dataset step entirely; `--download_datasets` also accepts a comma-separated list of dataset names instead of `all`. With no `--download_datasets` given, non-interactive mode downloads nothing (safe default for CI).
+
+To force the wizard to run again regardless of completeness (e.g. to add a tool you skipped), run it directly instead of through `proteobench.nf`:
+```bash
+nextflow run setup.nf
 ```
 
 The pipeline reads `config.yaml` from the project root by default. It automatically picks up `global.output_dir` and `global.max_parallel_jobs` from that file.
@@ -174,47 +131,60 @@ See the [Nextflow executor documentation](https://www.nextflow.io/docs/latest/ex
 
 ---
 
-## Tool overview
+## Quick start (Python runner)
 
-| Tool | Acquisition | Input format | Install method |
-|------|-------------|-------------|----------------|
-| DIA-NN | DDA (v2.1+), DIA | raw, mzML | `python setup.py --download-diann` |
-| AlphaDIA | DIA | raw, mzML, .d | `pip install alphadia` |
-| Sage | DDA | mzML, MGF | `python setup.py --sage-only` (needs cargo) |
-| FragPipe | DDA, DIA | raw, mzML, .d | GUI installer + `python setup.py --accept-license` |
-| MaxQuant | DDA, DIA | raw | Download from maxquant.org |
-| MetaMorpheus | DDA | raw, mzML | Download from GitHub |
+The Python runner does not run the setup wizard itself — run it once via Nextflow first:
+
+```bash
+# Option A: conda
+conda env create -f environment.yml
+conda activate proteobench-pipeline
+# Option B: pip
+pip install -r requirements.txt
+
+nextflow run setup.nf       # interactive; writes config.yaml directly on a first run
+```
+
+If `config.yaml` didn't exist yet, `setup.nf` writes it directly and tells you which dataset `CHANGE_ME` paths to fill in. If it already existed, `setup.nf` writes its findings to `config.docker.yaml` instead — copy over what you need:
+
+```bash
+cp config.docker.yaml config.yaml    # only if setup.nf reported it wrote there instead
+```
+
+Then:
+
+```bash
+# See which tools and datasets are configured
+python run_proteobench.py --list-tools
+python run_proteobench.py --list-datasets
+
+# Preview all planned jobs and their full CLI commands (nothing is executed)
+python run_proteobench.py --dry-run
+
+# Execute all enabled jobs
+python run_proteobench.py
+```
 
 ---
 
-## Manually installing tools not handled by setup.py
+## Tool overview
 
-### AlphaDIA
+| Tool | Acquisition | Input format | Docker image |
+|------|-------------|-------------|----------------|
+| DIA-NN | DDA (v2.1+), DIA | raw, mzML | `biocontainers/diann:v1.8.1_cv1` (public) or `ghcr.io/bigbio/diann:2.x` (GitHub token) |
+| AlphaDIA | DIA | raw, mzML, .d | `mannlabs/alphadia:latest` |
+| Sage | DDA | mzML, MGF | `ghcr.io/lazear/sage:latest` |
+| FragPipe | DDA, DIA | raw, mzML, .d | `fcyucn/fragpipe:latest` + licensed MSFragger/IonQuant/diaTracer JARs |
+| MaxQuant | DDA, DIA | raw | `quay.io/medbioinf/maxquant:latest` |
+| MetaMorpheus | DDA | raw, mzML | `smithchemwisc/metamorpheus:latest` |
 
-```bash
-pip install alphadia
-which alphadia   # copy this path into config.yaml > tools > alphadia > versions > command
-```
+All six images are pulled by the setup wizard (run automatically by `nextflow run proteobench.nf`, or directly via `nextflow run setup.nf`) — see [Quick start](#quick-start-nextflow-runner--recommended) above. There is no native/manual install path any more; every tool runs from its image.
 
-### MaxQuant
+---
 
-1. Download the `.zip` from [maxquant.org](https://www.maxquant.org/)
-2. Extract to a directory, e.g. `/opt/MaxQuant_v2.8.0.0`
-3. Set `dir: /opt/MaxQuant_v2.8.0.0` in `config.yaml` under `tools > maxquant > versions`
-4. Set `dotnet:` under `global` to your .NET 8 runtime path
+## Adding a docker image tag setup.nf didn't pull
 
-### MetaMorpheus
-
-1. Download the `.zip` from [GitHub releases](https://github.com/smith-chem-wisc/MetaMorpheus/releases)
-2. Extract to a directory, e.g. `/opt/MetaMorpheus`
-3. Set `dir: /opt/MetaMorpheus` in `config.yaml` under `tools > metamorpheus > versions`
-
-### FragPipe
-
-1. Download from [FragPipe GitHub releases](https://github.com/Nesvilab/FragPipe/releases)
-2. Extract to e.g. `/opt/fragpipe-24.0`
-3. Set `dir: /opt/fragpipe-24.0` in `config.yaml`
-4. Run `python setup.py --accept-license` to download MSFragger, IonQuant, and DiaTracer
+`setup.nf` always pulls `:latest` (or, for DIA-NN, whichever versions you chose). To pin or add a different tag, edit `config.yaml` directly — add a new entry under that tool's `versions:` list with the new `image:` tag and `enabled: true`. Any `*_bin`/`*_dir`/`fragpipe_root` path may need updating too if the new image version changes its internal layout; `docker run --rm --entrypoint find <image> / -maxdepth 4 -iname <binary-name>` (as `setup.nf` does internally) will locate it.
 
 ---
 
@@ -227,10 +197,12 @@ tools:
   diann:
     versions:
       - id: "2.5.0"
-        binary: /opt/diann-2.5.0/diann-linux
+        image: ghcr.io/bigbio/diann:2.5.0
+        diann_bin: /usr/diann/2.5.0/diann
         enabled: true    # ← run this version
-      - id: "1.9.2"
-        binary: /opt/diann-1.9.2/diann-linux
+      - id: "1.8.1"
+        image: biocontainers/diann:v1.8.1_cv1
+        diann_bin: /usr/diann/1.8.1/diann
         enabled: false   # ← skip this version
 ```
 
@@ -248,7 +220,7 @@ datasets:
     format: raw                        # raw | mzml | d | wiff | mgf
     instrument: Orbitrap               # Orbitrap | Astral | timstof | ZenoTOF
     fasta: /data/fastas/human.fasta
-    fasta_decoy: /data/fastas/human_decoy.fasta   # only needed for FragPipe
+    fasta_decoy: /data/fastas/human_decoy.fasta   # optional; FragPipe generates one automatically if omitted
 
 tools:
   diann:
@@ -256,6 +228,22 @@ tools:
       - Entrapment_DIA
       - My_New_Dataset    # ← add here
 ```
+
+---
+
+## Adding a downloadable dataset
+
+To let `nextflow run setup.nf` download a dataset automatically instead of a user pointing `path:`/`fasta:` at existing files by hand, add an entry to `nextflow/datasets_catalog.yaml` with a real download URL:
+
+```yaml
+My_New_Dataset:
+  url: https://example.org/path/to/My_New_Dataset.zip
+  acquisition: DIA          # DDA or DIA
+  format: raw                # raw | mzml | d | wiff | mgf
+  instrument: Orbitrap       # Orbitrap | Astral | timstof | ZenoTOF
+```
+
+The zip is expected to contain, at its top level: the MS files, exactly one `*.fasta` (+ optionally one decoy fasta with `decoy` in the name), and optionally an `mzml/` subfolder. Re-run `nextflow run setup.nf` — it offers the new dataset (scoped to tools it's relevant to), downloads and unzips it, and writes the resolved `path:`/`fasta:` into `config.yaml`/`config.docker.yaml` automatically.
 
 ---
 
@@ -300,11 +288,15 @@ The `.done` marker causes the pipeline to skip that job on the next run (useful 
 
 | Error message | Likely cause | Fix |
 |---------------|-------------|-----|
-| `Config file not found` | `config.yaml` does not exist | `cp config.template.yaml config.yaml` |
+| `Config file not found` (Python runner only; `proteobench.nf` runs setup itself) | `config.yaml` does not exist | `nextflow run setup.nf`, or `cp config.docker.yaml config.yaml` if it already wrote there |
 | `still contains 'CHANGE_ME'` | Path not updated in config | Edit `config.yaml` and replace CHANGE_ME |
-| `binary not found: ...` | Tool not installed or wrong path | Check the path; run `python setup.py --check` |
+| `docker: command not found` / `Cannot connect to the Docker daemon` | Docker not installed, not running, or user lacks permission | Install Docker, start the daemon, add your user to the `docker` group |
+| `docker image not pulled locally` | Image not pulled yet | `nextflow run setup.nf` |
 | `No 'raw' files found` | Wrong `format:` or wrong `path:` | Verify files exist and `format:` matches |
-| `MSFragger JAR not found` | MSFragger not downloaded | `python setup.py --accept-license --msfragger-only` |
+| `MSFragger/IonQuant/diaTracer JAR not found in jars_dir` | Licensed FragPipe JAR missing | `nextflow run setup.nf` and provide the downloaded zip/folder when asked |
+| `build_command failed: Philosopher decoy generation failed` | FASTA's directory isn't writable, or the FASTA is malformed | Check permissions on the FASTA's directory; or set `fasta_decoy:` explicitly to a pre-built one |
+| `no download URL set in nextflow/datasets_catalog.yaml` | Catalog entry still has `url: CHANGE_ME` | Add the real URL to `nextflow/datasets_catalog.yaml`, then re-run `nextflow run setup.nf` |
+| Dataset download skipped in CI | Non-interactive mode with no `--download_datasets` (safe default) | Pass `--download_datasets all` or a comma-separated list |
 | `exit code 1 — check log: ...` | Tool crashed during search | Open the `stderr.log` file shown in the error |
 | Job is skipped unexpectedly | `.done` marker exists | Delete the `.done` file in the output directory, or set `overwrite: true` |
 | `No enabled jobs found` | All versions have `enabled: false` | Set `enabled: true` for at least one version in `config.yaml` |

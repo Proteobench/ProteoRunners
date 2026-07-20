@@ -71,10 +71,10 @@ def load_config(path: Path) -> dict:
 
 
 def build_jobs(cfg: dict, tool_filter: str | None, dataset_filter: str | None) -> list[BaseRunner]:
-    global_cfg = cfg.get("global", {})
-    search_params = cfg.get("search_params", {})
-    datasets = cfg.get("datasets", {})
-    tools = cfg.get("tools", {})
+    global_cfg = cfg.get("global") or {}
+    search_params = cfg.get("search_params") or {}
+    datasets = cfg.get("datasets") or {}
+    tools = cfg.get("tools") or {}
 
     jobs: list[BaseRunner] = []
 
@@ -178,8 +178,8 @@ def print_summary(results: list[RunResult]) -> None:
 
 
 def list_tools(cfg: dict) -> None:
-    tools = cfg.get("tools", {})
-    datasets = cfg.get("datasets", {})
+    tools = cfg.get("tools") or {}
+    datasets = cfg.get("datasets") or {}
     print(f"\nAvailable tools (from config.yaml):\n")
     print(f"  {'TOOL':<14} {'VERSIONS':>9}  {'ENABLED':>8}  DATASETS")
     print("  " + "-" * 60)
@@ -196,7 +196,7 @@ def list_tools(cfg: dict) -> None:
 
 
 def list_datasets(cfg: dict) -> None:
-    datasets = cfg.get("datasets", {})
+    datasets = cfg.get("datasets") or {}
     print(f"\nAvailable datasets (from config.yaml):\n")
     print(f"  {'NAME':<28} {'ACQ':<5} {'FMT':<6} {'INSTRUMENT':<12} PATH")
     print("  " + "-" * 80)
@@ -216,7 +216,7 @@ def show_dry_run_commands(jobs: list[BaseRunner]) -> None:
         try:
             input_files = job.get_input_files()
             fasta = Path(job.dataset_cfg["fasta"])
-            output_dir = job._output_dir_path()
+            output_dir = job.make_output_dir()
             cmd = job.build_command(input_files, fasta, output_dir)
             print("  " + shlex.join(str(c) for c in cmd))
         except Exception as exc:
@@ -339,7 +339,7 @@ Examples:
         print(f"\nEdit {args.config} and fix the errors above before running.\n")
         sys.exit(1)
 
-    global_cfg = cfg.get("global", {})
+    global_cfg = cfg.get("global") or {}
     output_dir = Path(global_cfg.get("output_dir", "results"))
     output_dir.mkdir(parents=True, exist_ok=True)
     max_workers = global_cfg.get("max_parallel_jobs", 2)

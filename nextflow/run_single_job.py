@@ -63,10 +63,10 @@ def main():
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
-    global_cfg    = cfg.get("global", {})
-    search_params = cfg.get("search_params", {})
-    datasets      = cfg.get("datasets", {})
-    tool_cfg      = cfg.get("tools", {}).get(args.tool)
+    global_cfg    = cfg.get("global") or {}
+    search_params = cfg.get("search_params") or {}
+    datasets      = cfg.get("datasets") or {}
+    tool_cfg      = (cfg.get("tools") or {}).get(args.tool)
 
     if not tool_cfg:
         _emit(args.tool, args.version, args.dataset,

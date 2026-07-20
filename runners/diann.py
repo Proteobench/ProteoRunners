@@ -1,5 +1,10 @@
 """DIA-NN runner.
 
+Runs inside the quantms DIA-NN docker images (pulled by setup.nf): 1.8.1 from
+biocontainers/diann (public), 2.x from ghcr.io/bigbio/diann (requires a
+GitHub token with read:packages, since those images are private). The
+in-container binary path is recorded per version in 'diann_bin'.
+
 Supported search_params keys (others ignored):
   fdr_psm, fdr_protein, match_between_runs, normalize,
   precursor_mass_tolerance_ppm, fragment_mass_tolerance_ppm,
@@ -22,16 +27,17 @@ from .base import DDA, DIA, ENZYME_MAP, BaseRunner
 
 logger = logging.getLogger(__name__)
 
-# Cache smoke-test results per binary path so we don't re-run for every dataset.
-_binary_smoke_cache: dict[str, str | None] = {}  # path → error string or None
+# Cache smoke-test results per image+binary so we don't re-run for every dataset.
+_binary_smoke_cache: dict[str, str | None] = {}  # "image|binary" → error string or None
 
 
-def _smoke_test_binary(binary: str) -> str | None:
+def _smoke_test_binary(image: str, binary: str) -> str | None:
     """Return an error string if the binary crashes on startup, else None."""
-    if binary in _binary_smoke_cache:
-        return _binary_smoke_cache[binary]
+    cache_key = f"{image}|{binary}"
+    if cache_key in _binary_smoke_cache:
+        return _binary_smoke_cache[cache_key]
     try:
-        r = subprocess.run([binary], capture_output=True, timeout=5)
+        r = subprocess.run(["docker", "run", "--rm", image, binary], capture_output=True, timeout=30)
         if r.returncode < 0:
             sig = -r.returncode
             try:
@@ -48,7 +54,7 @@ def _smoke_test_binary(binary: str) -> str | None:
         err = None  # binary is running — not a startup crash
     except Exception as exc:
         err = f"Could not smoke-test DIA-NN binary: {exc}"
-    _binary_smoke_cache[binary] = err
+    _binary_smoke_cache[cache_key] = err
     return err
 
 # Carbamidomethyl (C) as a fixed mod has a built-in shortcut flag; DIA-NN requires
@@ -147,15 +153,19 @@ class DIANNRunner(BaseRunner):
             else:
                 errors.append(f"No input MS files found in {dataset_path}")
 
-        binary = Path(self.version_cfg["binary"])
-        if not binary.exists():
+        errors += self.docker_preflight()
+        if errors:
+            return errors
+
+        image = self.docker_image()
+        binary = self.version_cfg.get("diann_bin", "")
+        if not binary:
             errors.append(
-                f"DIA-NN binary not found: {binary}. "
-                f"Check 'binary:' under tools > diann > versions > id: {self.version_id} in config.yaml. "
-                "Run: python setup.py --download-diann   to download automatically."
+                f"'diann_bin' is not set under tools > diann > versions > id: {self.version_id} in config.yaml. "
+                "Run: nextflow run setup.nf   to detect it automatically."
             )
             return errors
-        smoke_err = _smoke_test_binary(str(binary))
+        smoke_err = _smoke_test_binary(image, binary)
         if smoke_err:
             errors.append(smoke_err)
         return errors
@@ -209,11 +219,12 @@ class DIANNRunner(BaseRunner):
         return args
 
     def build_command(self, input_files: list[Path], fasta: Path, output_dir: Path) -> list[str]:
-        binary  = str(self.version_cfg["binary"])
+        binary  = self.version_cfg.get("diann_bin", "diann")
         p       = self.map_params()
         threads = self.global_cfg.get("threads_per_job", 16)
 
-        cmd = [binary]
+        cmd = self.docker_run_prefix(self.docker_image())
+        cmd.append(binary)
 
         for f in input_files:
             cmd += ["--f", str(f)]

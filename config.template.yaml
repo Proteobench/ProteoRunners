@@ -339,6 +339,10 @@ tools:
         image: quay.io/medbioinf/maxquant:latest
         maxquant_dll: /opt/MaxQuant_v2.6.3.0/bin/MaxQuantCmd.dll   # in-container path
         enabled: false
+      - id: "2.8.1.0"
+        image: quay.io/medbioinf/maxquant:2.8.1.0
+        maxquant_dll: /opt/MaxQuant_v2.8.1.0/bin/MaxQuantCmd.dll   # in-container path
+        enabled: false
 
     datasets:
       - Entrapment_DIA

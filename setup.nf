@@ -363,18 +363,21 @@ workflow SETUP {
 
     // ── MaxQuant ──────────────────────────────────────────────────────────
     section('MaxQuant')
-    if (askYesNo('Pull MaxQuant? ' + dim('(quay.io/medbioinf/maxquant:latest, Max Planck academic license)'), true)) {
-        def image = 'quay.io/medbioinf/maxquant:latest'
-        if (run(['docker', 'pull', image]) == 0) {
-            def found = firstLine(capture(['docker', 'run', '--rm', '--entrypoint', 'find', image, '/opt', '-maxdepth', '3', '-iname', 'MaxQuantCmd.dll']))
-            def dll = found ?: '/opt/MaxQuant/bin/MaxQuantCmd.dll'
-            def m = (dll =~ /MaxQuant_v([\d.]+)/)
-            def ver = m.find() ? m.group(1) : 'latest'
-            results.maxquant = [id: ver, image: image, maxquant_dll: dll]
-            ok("MaxQuant ready " + dim("(${image})"))
-        } else {
-            fail('MaxQuant pull failed — skipping.')
+    if (askYesNo('Pull MaxQuant? ' + dim('(quay.io/medbioinf/maxquant:latest + :2.8.1.0, Max Planck academic license)'), true)) {
+        results.maxquant = []
+        ['quay.io/medbioinf/maxquant:latest', 'quay.io/medbioinf/maxquant:2.8.1.0'].each { mqImage ->
+            if (run(['docker', 'pull', mqImage]) == 0) {
+                def found = firstLine(capture(['docker', 'run', '--rm', '--entrypoint', 'find', mqImage, '/opt', '-maxdepth', '3', '-iname', 'MaxQuantCmd.dll']))
+                def dll = found ?: '/opt/MaxQuant/bin/MaxQuantCmd.dll'
+                def m = (dll =~ /MaxQuant_v([\d.]+)/)
+                def ver = m.find() ? m.group(1) : 'latest'
+                results.maxquant << [id: ver, image: mqImage, maxquant_dll: dll]
+                ok("MaxQuant ready " + dim("(${mqImage})"))
+            } else {
+                fail("MaxQuant pull failed for ${mqImage} — skipping.")
+            }
         }
+        if (!results.maxquant) results.remove('maxquant')
     } else {
         warn('Skipping MaxQuant.')
     }
@@ -662,8 +665,12 @@ workflow SETUP {
     }
 
     if (results.maxquant) {
-        sb << "  maxquant:\n    versions:\n      - id: \"${results.maxquant.id}\"\n        image: ${results.maxquant.image}\n"
-        sb << "        maxquant_dll: ${results.maxquant.maxquant_dll}\n        enabled: true\n\n"
+        sb << "  maxquant:\n    versions:\n"
+        results.maxquant.eachWithIndex { v, i ->
+            sb << "      - id: \"${v.id}\"\n        image: ${v.image}\n"
+            sb << "        maxquant_dll: ${v.maxquant_dll}\n        enabled: ${i == 0}\n"
+        }
+        sb << "\n"
         sb << datasetsBlockFor('maxquant', "    datasets:\n      - CHANGE_ME\n\n")
         sb << "    extra: {}\n\n"
     }

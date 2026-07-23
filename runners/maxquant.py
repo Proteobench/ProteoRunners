@@ -33,19 +33,21 @@ from .base import DDA, DIA, ENZYME_MAP, MOD_REGISTRY, BaseRunner
 
 logger = logging.getLogger(__name__)
 
-# The docker image pins MaxQuant 2.6.3.0, whose MaxQuantCmd.dll has a much
-# smaller CLI than the 2.8+ syntax this runner used to target: `--create`
-# only writes a bare, single-parameterGroup template (no --LCMSType /
-# --pathFasta / --pathRawFileFolder), and `--changeParameter` does not exist
-# at all. Every field below is therefore set by editing the XML directly.
+# Two images are supported: :latest (MaxQuant 2.6.3.0) and :2.8.1.0. Rather
+# than depend on each version's CLI (2.6.3.0's MaxQuantCmd.dll has no
+# --changeParameter, and the --create syntax differs between 2.6 and 2.8, see
+# _create_mqpar), every field below is set by editing the bare mqpar.xml
+# template directly, which is version-agnostic.
 #
-# lcmsRunType is a string-backed enum; "Standard" is confirmed (present
-# verbatim in MaxQuantLibS.dll). The DIA value used here ("DIA") is a
-# best-effort guess by naming symmetry — MaxQuantCmd's --dryrun does not
-# validate it, so an actual DIA run is the only way to confirm it; if it
-# turns out wrong, the run fails loudly with a .NET deserialization error
-# in stderr.log rather than silently mis-configuring the search.
+# lcmsRunType XML value for the <=2.7 CLI, whose bare `--create` always writes
+# a "Standard" template that must be patched for DIA. The DIA value here is a
+# best-effort guess by naming symmetry (2.6.3.0's --create cannot be told the
+# type). The 2.8+ CLI takes --LCMSType at create time and writes the correct
+# value itself (Standard / MaxDIA / ...), so that path does not use this map.
 _MQ_LCMS_RUN_TYPE = {DDA: "Standard", DIA: "DIA"}
+
+# instrument (dataset_cfg) -> MaxQuant 2.8 --instrumentType code.
+_MQ_INSTRUMENT_CODE = {"orbitrap": "TO", "astral": "TA", "timstof": "BT", "zenotof": "SC"}
 
 
 class MaxQuantRunner(BaseRunner):
@@ -57,6 +59,23 @@ class MaxQuantRunner(BaseRunner):
 
     def _cmd_dll(self) -> str:
         return self.version_cfg.get("maxquant_dll", "/opt/MaxQuant/bin/MaxQuantCmd.dll")
+
+    def _version_tuple(self) -> tuple[int, ...]:
+        """Leading numeric components of the configured version id, e.g.
+        "2.8.1.0" -> (2, 8, 1, 0). Used to pick the version-specific CLI form."""
+        out = []
+        for part in str(self.version_cfg.get("id", "")).split("."):
+            if not part.isdigit():
+                break
+            out.append(int(part))
+        return tuple(out)
+
+    def _lcms_type_code(self) -> str:
+        """MaxQuant 2.8 --LCMSType code for this dataset's acquisition/instrument."""
+        tims = str(self.dataset_cfg.get("instrument", "")).lower() == "timstof"
+        if self.acquisition == DIA:
+            return "TDIA" if tims else "DIA"
+        return "TD" if tims else "ST"
 
     def preflight_check(self) -> list[str]:
         errors = super().preflight_check()
@@ -129,9 +148,12 @@ class MaxQuantRunner(BaseRunner):
         threads_el = root.find('numThreads')
         if threads_el is not None:
             threads_el.text = str(self.global_cfg.get("threads_per_job", 16))
-        run_type = _MQ_LCMS_RUN_TYPE.get(self.acquisition, "Standard")
-        for el in root.findall('.//lcmsRunType'):
-            el.text = run_type
+        # <=2.7 create is always "Standard" and must be patched; 2.8+ create
+        # already wrote the correct lcmsRunType from --LCMSType, so leave it.
+        if self._version_tuple() < (2, 8):
+            run_type = _MQ_LCMS_RUN_TYPE.get(self.acquisition, "Standard")
+            for el in root.findall('.//lcmsRunType'):
+                el.text = run_type
         dirty = True
 
         # --- 1. simple top-level / per-parameterGroup overrides ---
@@ -297,14 +319,29 @@ class MaxQuantRunner(BaseRunner):
 
         self._raw_folder = input_files[0].parent  # stored for post_run_hook
 
-        # This MaxQuant version's --create refuses to overwrite an existing
-        # mqpar.xml (unlike --newMqpar in the 2.8+ CLI this used to target).
+        # --create refuses to overwrite an existing mqpar.xml.
         mqpar.unlink(missing_ok=True)
 
-        # --create takes no other arguments — it always writes the same bare,
-        # single-parameterGroup template. Every actual parameter is then set
-        # directly in the XML below.
-        create_cmd = self.docker_run_prefix(self.docker_image()) + ["dotnet", dll, str(mqpar), "--create"]
+        # The create CLI changed at 2.8. <=2.7: `<mqpar> --create` writes a bare
+        # Standard template. 2.8+: `--create --newMqpar <mqpar>` is mandatory and
+        # requires --LCMSType / --instrumentType / --pathFasta / --pathRawFileFolder,
+        # from which it writes a template with the correct lcmsRunType already set.
+        # Either way the per-file lists, fasta and search params are (re)set from
+        # the XML in _patch_mqpar below, so the paths passed here only need to be
+        # valid; their contents are overwritten.
+        if self._version_tuple() >= (2, 8):
+            instr = _MQ_INSTRUMENT_CODE.get(
+                str(self.dataset_cfg.get("instrument", "")).lower(), "TO")
+            create_args = [
+                "--create", "--newMqpar", str(mqpar),
+                "--LCMSType", self._lcms_type_code(),
+                "--instrumentType", instr,
+                "--pathFasta", str(fasta),
+                "--pathRawFileFolder", str(self._raw_folder),
+            ]
+        else:
+            create_args = [str(mqpar), "--create"]
+        create_cmd = self.docker_run_prefix(self.docker_image()) + ["dotnet", dll] + create_args
         logger.info("Creating mqpar.xml ...")
         result = subprocess.run(create_cmd, capture_output=True, text=True)
         if result.returncode != 0:

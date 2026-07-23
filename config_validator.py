@@ -61,6 +61,31 @@ def docker_setup_errors(cfg: dict) -> list[str]:
     return errors
 
 
+def incomplete_docker_tools(cfg: dict) -> list[str]:
+    """Names of tools whose docker setup is incomplete (at least one enabled
+    version has a missing image / FragPipe JAR / in-container path). Used by
+    setup.nf to redo and re-prompt only the tools that actually need it,
+    leaving already-complete tools untouched. If docker is unavailable, every
+    configured tool is reported (nothing can be verified).
+    """
+    if not shutil.which("docker"):
+        return list((cfg.get("tools") or {}).keys())
+
+    incomplete: list[str] = []
+    for tool_name, tool_cfg in (cfg.get("tools") or {}).items():
+        if not isinstance(tool_cfg, dict):
+            continue
+        tool_errors: list[str] = []
+        for i, ver in enumerate(tool_cfg.get("versions", [])):
+            if not isinstance(ver, dict) or not ver.get("enabled", False):
+                continue
+            ver_prefix = f"tools > {tool_name} > id: {ver.get('id', f'index {i}')}"
+            _validate_tool_docker(tool_name, ver, ver_prefix, tool_errors)
+        if tool_errors:
+            incomplete.append(tool_name)
+    return incomplete
+
+
 def validate_config(cfg: dict, config_path: Path) -> list[str]:
     errors: list[str] = []
 
@@ -306,6 +331,10 @@ if __name__ == "__main__":
         "--check-docker-setup", action="store_true",
         help="Only check docker/tool installation (images, FragPipe JARs), not datasets or search_params.",
     )
+    parser.add_argument(
+        "--list-incomplete-tools", action="store_true",
+        help="Print (one per line) the tools whose docker setup is incomplete; used by setup.nf.",
+    )
     args = parser.parse_args()
 
     if not args.config.exists():
@@ -314,6 +343,11 @@ if __name__ == "__main__":
 
     with open(args.config) as f:
         loaded_cfg = yaml.safe_load(f)
+
+    if args.list_incomplete_tools:
+        for tool in incomplete_docker_tools(loaded_cfg):
+            print(tool)
+        sys.exit(0)
 
     found_errors = docker_setup_errors(loaded_cfg) if args.check_docker_setup else validate_config(loaded_cfg, args.config)
     for e in found_errors:

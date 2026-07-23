@@ -15,8 +15,10 @@
 //       --msfragger_path ... --ionquant_path ... --diatracer_path ... \
 //       --build_diann_v2 --diann_version 2.5.0   # scripted / CI setup
 //
-// Writes directly to config.yaml only if that file doesn't exist yet;
-// otherwise writes to config.docker.yaml so nothing hand-edited is clobbered.
+// On a first run it writes config.yaml. On a later run it only re-prompts and
+// redoes the tools whose docker setup is incomplete, preserves already-complete
+// tools and the global/search_params/datasets sections, and updates config.yaml
+// in place (keeping a .bak copy).
 //
 // Docker must already be installed and running — see README.md.
 
@@ -217,6 +219,37 @@ def loadCatalog = { File f ->
     return catalog
 }
 
+// Split a config.yaml's `tools:` section into per-tool block text, keyed by
+// tool name. Used on a repair run to preserve already-complete tools verbatim
+// (block boundaries are the 2-space-indented `  <tool>:` lines).
+def parseToolBlocks = { String configText ->
+    def blocks = [:]
+    def idx = configText.indexOf('\ntools:\n')
+    if (idx < 0) return blocks
+    def toolsText = configText.substring(idx + '\ntools:\n'.length())
+    def curName = null
+    def curLines = []
+    toolsText.eachLine { line ->
+        def m = (line =~ /^  (\w+):\s*$/)
+        if (m) {
+            if (curName) blocks[curName] = curLines.join('\n')
+            curName = m[0][1]
+            curLines = [line]
+        } else if (curName != null) {
+            curLines << line
+        }
+    }
+    if (curName) blocks[curName] = curLines.join('\n')
+    return blocks
+}
+
+// Grab a tool block's `datasets:` sub-block (so a repair preserves dataset
+// assignments instead of resetting them). Returns null if not found.
+def extractDatasetsSubBlock = { String toolBlock ->
+    def m = (toolBlock =~ /(?ms)(^    datasets:.*?)(?=^    \w|\z)/)
+    return m.find() ? m.group(1).replaceAll(/\n+$/, '') + '\n\n' : null
+}
+
 def results = [:]   // tool name -> map of facts collected during this run, used to write the config
 
 // Offers to download+unzip catalog datasets relevant to the tools just set up
@@ -361,9 +394,33 @@ workflow SETUP {
     }
     ok('Docker daemon is running')
 
+    // First run (no config.yaml): walk through every tool. Repair run (config
+    // exists): only prompt for / redo the tools the validator flags as
+    // incomplete — already-complete tools are preserved verbatim and tools that
+    // were never configured are left alone (add them via a fresh setup).
+    def configFile         = new File(params.config as String)
+    def firstRun           = !configFile.exists()
+    def existingToolBlocks = firstRun ? [:] : parseToolBlocks(configFile.text)
+    def incompleteTools    = [] as Set
+    if (!firstRun) {
+        def p = ['python3', "${projectDir}/config_validator.py".toString(),
+                 '--config', configFile.absolutePath, '--list-incomplete-tools'].execute()
+        def o = new StringBuilder(), e = new StringBuilder()
+        p.consumeProcessOutput(o, e)
+        p.waitFor()
+        incompleteTools = o.toString().readLines()*.trim().findAll { it } as Set
+        def complete = (existingToolBlocks.keySet() - incompleteTools)
+        section('What needs doing')
+        if (incompleteTools) info("Re-doing (incomplete): " + incompleteTools.sort().join(', '))
+        if (complete)        ok("Keeping (already complete): " + complete.sort().join(', '))
+    }
+
     // ── MaxQuant ──────────────────────────────────────────────────────────
     section('MaxQuant')
-    if (askYesNo('Pull MaxQuant? ' + dim('(quay.io/medbioinf/maxquant:latest + :2.8.1.0, Max Planck academic license)'), true)) {
+    if (!firstRun && !incompleteTools.contains('maxquant')) {
+        if (existingToolBlocks.maxquant) ok('MaxQuant already set up — skipping.')
+        else warn('MaxQuant not configured — skipping (add it via a fresh setup).')
+    } else if (askYesNo('Pull MaxQuant? ' + dim('(quay.io/medbioinf/maxquant:latest + :2.8.1.0, Max Planck academic license)'), true)) {
         results.maxquant = []
         ['quay.io/medbioinf/maxquant:latest', 'quay.io/medbioinf/maxquant:2.8.1.0'].each { mqImage ->
             if (run(['docker', 'pull', mqImage]) == 0) {
@@ -384,7 +441,10 @@ workflow SETUP {
 
     // ── Sage ──────────────────────────────────────────────────────────────
     section('Sage')
-    if (askYesNo('Pull Sage? ' + dim('(ghcr.io/lazear/sage:latest)'), true)) {
+    if (!firstRun && !incompleteTools.contains('sage')) {
+        if (existingToolBlocks.sage) ok('Sage already set up — skipping.')
+        else warn('Sage not configured — skipping (add it via a fresh setup).')
+    } else if (askYesNo('Pull Sage? ' + dim('(ghcr.io/lazear/sage:latest)'), true)) {
         def image = 'ghcr.io/lazear/sage:latest'
         if (run(['docker', 'pull', image]) == 0) {
             def found = firstLine(capture(['docker', 'run', '--rm', '--entrypoint', 'find', image, '/app', '-maxdepth', '1', '-type', 'f', '-executable']))
@@ -400,7 +460,10 @@ workflow SETUP {
 
     // ── MetaMorpheus ──────────────────────────────────────────────────────
     section('MetaMorpheus')
-    if (askYesNo('Pull MetaMorpheus? ' + dim('(smithchemwisc/metamorpheus:latest)'), true)) {
+    if (!firstRun && !incompleteTools.contains('metamorpheus')) {
+        if (existingToolBlocks.metamorpheus) ok('MetaMorpheus already set up — skipping.')
+        else warn('MetaMorpheus not configured — skipping (add it via a fresh setup).')
+    } else if (askYesNo('Pull MetaMorpheus? ' + dim('(smithchemwisc/metamorpheus:latest)'), true)) {
         def image = 'smithchemwisc/metamorpheus:latest'
         if (run(['docker', 'pull', image]) == 0) {
             results.metamorpheus = [image: image]
@@ -414,7 +477,10 @@ workflow SETUP {
 
     // ── AlphaDIA ──────────────────────────────────────────────────────────
     section('AlphaDIA')
-    if (askYesNo('Pull AlphaDIA? ' + dim('(mannlabs/alphadia:latest)'), true)) {
+    if (!firstRun && !incompleteTools.contains('alphadia')) {
+        if (existingToolBlocks.alphadia) ok('AlphaDIA already set up — skipping.')
+        else warn('AlphaDIA not configured — skipping (add it via a fresh setup).')
+    } else if (askYesNo('Pull AlphaDIA? ' + dim('(mannlabs/alphadia:latest)'), true)) {
         def image = 'mannlabs/alphadia:latest'
         if (run(['docker', 'pull', image]) == 0) {
             def gpu = params.alphadia_gpu ?: askYesNo('Do you have an NVIDIA GPU with the NVIDIA Container Toolkit set up for docker?', false)
@@ -429,10 +495,14 @@ workflow SETUP {
 
     // ── FragPipe (image + separately-licensed MSFragger/IonQuant/diaTracer) ─
     section('FragPipe')
-    def doFragpipe = !params.skip_fragpipe &&
+    def skipFragpipe = !firstRun && !incompleteTools.contains('fragpipe')
+    def doFragpipe = !skipFragpipe && !params.skip_fragpipe &&
         askYesNo('Set up FragPipe? ' + dim('(MSFragger/IonQuant/diaTracer need a separate Nesvilab academic license)'), true)
 
-    if (doFragpipe) {
+    if (skipFragpipe) {
+        if (existingToolBlocks.fragpipe) ok('FragPipe already set up — skipping.')
+        else warn('FragPipe not configured — skipping (add it via a fresh setup).')
+    } else if (doFragpipe) {
         def image = 'fcyucn/fragpipe:latest'
         if (run(['docker', 'pull', image]) == 0) {
             def rootFound = firstLine(capture(['docker', 'run', '--rm', '--entrypoint', 'find', image, '/fragpipe_bin', '-maxdepth', '4', '-type', 'f', '-name', 'fragpipe']))
@@ -499,7 +569,10 @@ workflow SETUP {
 
     // ── DIA-NN (1.8.1 public image + optional 2.x built locally) ─────────
     section('DIA-NN')
-    if (askYesNo('Set up DIA-NN?', true)) {
+    if (!firstRun && !incompleteTools.contains('diann')) {
+        if (existingToolBlocks.diann) ok('DIA-NN already set up — skipping.')
+        else warn('DIA-NN not configured — skipping (add it via a fresh setup).')
+    } else if (askYesNo('Set up DIA-NN?', true)) {
         def versions = []
         def baseImage = 'biocontainers/diann:v1.8.1_cv1'
         if (run(['docker', 'pull', baseImage]) == 0) {
@@ -561,26 +634,33 @@ workflow SETUP {
     section('Datasets')
     def resolvedDatasets = downloadDatasets()
 
-    // ── Write config.docker.yaml ──────────────────────────────────────────
-    def templateText = new File("${projectDir}/config.template.yaml").text
-    def staticStart = templateText.indexOf('global:')
-    def staticEnd   = templateText.indexOf('\ntools:\n')
-    def staticSection = templateText.substring(staticStart, staticEnd)
+    // ── Write config.yaml ─────────────────────────────────────────────────
+    // Base the global/search_params/datasets sections on the existing config
+    // when there is one (so a repair preserves the user's edits), otherwise on
+    // the template (first run).
+    def baseText = configFile.exists() ? configFile.text : new File("${projectDir}/config.template.yaml").text
+    def staticStart = baseText.indexOf('global:')
+    def staticEnd   = baseText.indexOf('\ntools:\n')
+    def staticSection = baseText.substring(staticStart, staticEnd >= 0 ? staticEnd : baseText.length())
+    // Slicing at '\ntools:\n' consumes the newline terminating the last static
+    // line; restore it so the entry regex below still sees a complete last line
+    // (e.g. a config whose final dataset line is immediately followed by tools:).
+    if (!staticSection.endsWith('\n')) staticSection += '\n'
 
-    // Rebuild the datasets: block: keep every template entry that wasn't
-    // resolved this run (or from an earlier run) verbatim — including its
-    // CHANGE_ME placeholder path and comments — and swap in a real, resolved
-    // entry (real absolute path/fasta) for anything now present on disk.
+    // Rebuild the datasets: block. Keep every existing entry verbatim; only
+    // replace an entry with a freshly-resolved one when the existing entry is
+    // still a CHANGE_ME placeholder (template first run), and append any newly
+    // downloaded datasets not already present. This never clobbers real paths.
     def datasetsIdx = staticSection.indexOf('datasets:')
     def beforeDatasets = staticSection.substring(0, datasetsIdx)
     def afterDatasetsKeyword = staticSection.substring(datasetsIdx + 'datasets:'.length())
 
     def entryPattern = ~/(?m)^  (\S+):\n((?:    .*\n)+)/
-    def templateEntries = [:]
+    def existingEntries = [:]
     def matcher = entryPattern.matcher(afterDatasetsKeyword)
     def lastEnd = 0
     while (matcher.find()) {
-        templateEntries[matcher.group(1)] = "  ${matcher.group(1)}:\n${matcher.group(2)}"
+        existingEntries[matcher.group(1)] = "  ${matcher.group(1)}:\n${matcher.group(2)}"
         lastEnd = matcher.end()
     }
     // Every rendered entry above already ends with its own blank-line separator,
@@ -588,11 +668,13 @@ workflow SETUP {
     def datasetsTrailer = afterDatasetsKeyword.substring(lastEnd).replaceFirst(/^\n/, '')
 
     def datasetsOut = new StringBuilder('datasets:\n\n')
-    templateEntries.each { name, block ->
-        if (resolvedDatasets.containsKey(name)) return
-        datasetsOut << block << '\n'
+    existingEntries.each { name, block ->
+        boolean overrideWithResolved = resolvedDatasets.containsKey(name) && block.contains('CHANGE_ME')
+        if (!overrideWithResolved) datasetsOut << block << '\n'
     }
     resolvedDatasets.each { name, d ->
+        boolean keptVerbatim = existingEntries.containsKey(name) && !existingEntries[name].contains('CHANGE_ME')
+        if (keptVerbatim) return
         datasetsOut << "  ${name}:\n"
         datasetsOut << "    path: ${d.path}\n"
         datasetsOut << "    acquisition: ${d.acquisition}\n"
@@ -603,10 +685,12 @@ workflow SETUP {
         datasetsOut << '\n'
     }
 
-    // Which resolved datasets a given tool's placeholder should list, kept
-    // as its tool-specific fallback comment (e.g. "requires mzML input")
-    // when nothing resolved matches its acquisition capability.
-    def datasetsBlockFor = { String toolName, String fallback ->
+    // A tool's datasets: sub-block. On a repair, reuse the tool's existing
+    // assignment verbatim (redoing an image shouldn't reset its datasets);
+    // otherwise fill from the datasets resolved this run, or the fallback.
+    def datasetsFor = { String toolName, String fallback ->
+        def preserved = existingToolBlocks[toolName] ? extractDatasetsSubBlock(existingToolBlocks[toolName]) : null
+        if (preserved) return preserved
         def acqs = TOOL_ACQUISITIONS[toolName] ?: ['DDA', 'DIA']
         def names = resolvedDatasets.findAll { n, d -> d.acquisition in acqs }.keySet()
         if (!names) return fallback
@@ -617,17 +701,26 @@ workflow SETUP {
     }
 
     def sb = new StringBuilder()
-    sb << '# =============================================================================\n'
-    sb << '# Auto-generated by `nextflow run setup.nf` — only tools that were successfully\n'
-    sb << '# set up appear below. Re-run setup.nf any time to add more.\n'
-    sb << '# =============================================================================\n\n'
+    if (firstRun) {
+        sb << '# =============================================================================\n'
+        sb << '# Auto-generated by `nextflow run setup.nf` — only tools that were successfully\n'
+        sb << '# set up appear below. Re-run setup.nf any time to add more.\n'
+        sb << '# =============================================================================\n\n'
+    } else {
+        // Repair run: keep whatever header the existing config had, verbatim.
+        sb << baseText.substring(0, staticStart)
+    }
     sb << beforeDatasets
     sb << datasetsOut.toString()
     sb << datasetsTrailer
     // An empty mapping value ('tools:' with nothing indented under it) parses
     // as YAML null, not {} — write the explicit empty-map form so downstream
     // Python (cfg.get("tools", {})) doesn't choke on a None.
-    sb << (results ? 'tools:\n\n' : 'tools: {}\n')
+    sb << ((results || existingToolBlocks) ? 'tools:\n\n' : 'tools: {}\n')
+
+    // Emit an already-complete tool's existing block verbatim (normalised to a
+    // single trailing blank line).
+    def emitPreserved = { String tool -> sb << existingToolBlocks[tool].replaceAll(/\n+$/, '') + '\n\n' }
 
     if (results.diann) {
         sb << '  diann:\n    versions:\n'
@@ -638,30 +731,38 @@ workflow SETUP {
             sb << "        supports_dda: ${v.supports_dda}\n"
             sb << "        enabled: true\n\n"
         }
-        sb << datasetsBlockFor('diann', "    datasets:\n      - CHANGE_ME\n\n")
+        sb << datasetsFor('diann', "    datasets:\n      - CHANGE_ME\n\n")
         sb << "    extra:\n      library: \"\"\n\n"
+    } else if (existingToolBlocks.diann) {
+        emitPreserved('diann')
     }
 
     if (results.alphadia) {
         sb << "  alphadia:\n    versions:\n      - id: \"latest\"\n        image: ${results.alphadia.image}\n"
         sb << "        gpu: ${results.alphadia.gpu}\n        enabled: true\n\n"
-        sb << datasetsBlockFor('alphadia', "    datasets:\n      - CHANGE_ME\n\n")
+        sb << datasetsFor('alphadia', "    datasets:\n      - CHANGE_ME\n\n")
         sb << "    extra:\n      library: \"\"\n\n"
+    } else if (existingToolBlocks.alphadia) {
+        emitPreserved('alphadia')
     }
 
     if (results.sage) {
         sb << "  sage:\n    versions:\n      - id: \"latest\"\n        image: ${results.sage.image}\n"
         sb << "        sage_bin: ${results.sage.sage_bin}\n        enabled: true\n\n"
-        sb << datasetsBlockFor('sage', "    datasets: []   # requires mzML input\n\n")
+        sb << datasetsFor('sage', "    datasets: []   # requires mzML input\n\n")
         sb << "    extra:\n      write_pin: true\n      parquet: false\n\n"
+    } else if (existingToolBlocks.sage) {
+        emitPreserved('sage')
     }
 
     if (results.fragpipe) {
         sb << "  fragpipe:\n    versions:\n      - id: \"24.0\"\n        image: ${results.fragpipe.image}\n"
         sb << "        fragpipe_root: ${results.fragpipe.fragpipe_root}\n        jars_dir: ${results.fragpipe.jars_dir}\n"
         sb << "        container_python: /usr/bin/python3\n        enabled: ${results.fragpipe.ready}\n\n"
-        sb << datasetsBlockFor('fragpipe', "    datasets:\n      - CHANGE_ME\n\n")
+        sb << datasetsFor('fragpipe', "    datasets:\n      - CHANGE_ME\n\n")
         sb << "    extra:\n      dda_workflow: LFQ-MBR\n      dia_workflow: DIA_SpecLib_Quant\n      dia_pasef_workflow: DIA_SpecLib_Quant_diaPASEF\n\n"
+    } else if (existingToolBlocks.fragpipe) {
+        emitPreserved('fragpipe')
     }
 
     if (results.maxquant) {
@@ -671,38 +772,41 @@ workflow SETUP {
             sb << "        maxquant_dll: ${v.maxquant_dll}\n        enabled: ${i == 0}\n"
         }
         sb << "\n"
-        sb << datasetsBlockFor('maxquant', "    datasets:\n      - CHANGE_ME\n\n")
+        sb << datasetsFor('maxquant', "    datasets:\n      - CHANGE_ME\n\n")
         sb << "    extra: {}\n\n"
+    } else if (existingToolBlocks.maxquant) {
+        emitPreserved('maxquant')
     }
 
     if (results.metamorpheus) {
         sb << "  metamorpheus:\n    versions:\n      - id: \"latest\"\n        image: ${results.metamorpheus.image}\n        enabled: true\n\n"
-        sb << datasetsBlockFor('metamorpheus', "    datasets: []   # DDA-only\n\n")
+        sb << datasetsFor('metamorpheus', "    datasets: []   # DDA-only\n\n")
         sb << "    extra: {}\n\n"
+    } else if (existingToolBlocks.metamorpheus) {
+        emitPreserved('metamorpheus')
     }
 
-    // Never overwrite an existing config.yaml — a hand-edited file with real
-    // dataset paths and tuning is not ours to clobber. Only write there
-    // directly on a genuine first run; otherwise write the findings to
-    // config.docker.yaml for the user to merge manually.
-    def configFile = new File(params.config as String)
-    def wroteDirectly = !configFile.exists()
-    def target = wroteDirectly ? configFile : new File("${projectDir}/config.docker.yaml")
-    target.text = sb.toString()
+    // On a first run we create config.yaml. On a repair the merged output
+    // preserves the existing global/search_params/datasets and every
+    // already-complete tool verbatim (only the tools redone this run change),
+    // so it is safe to update config.yaml in place — a .bak copy is kept as a
+    // safety net. (firstRun was captured at the top, before this write.)
+    if (!firstRun) {
+        new File("${configFile.path}.bak").text = configFile.text
+    }
+    configFile.text = sb.toString()
 
-    banner('Setup complete', results.keySet() ? results.keySet().join(', ') : 'no tools configured')
-    ok('Wrote ' + dim("${target}"))
-    if (wroteDirectly) {
+    banner('Setup complete', results ? "configured: ${results.keySet().sort().join(', ')}" : 'no changes')
+    ok('Wrote ' + dim("${configFile}"))
+    if (firstRun) {
         println ''
         println bold('  Next steps:')
-        println '    ' + cyan('1.') + ' Edit ' + dim("${target}") + ': set global.output_dir and any remaining CHANGE_ME paths.'
+        println '    ' + cyan('1.') + ' Edit ' + dim("${configFile}") + ': set global.output_dir and any remaining CHANGE_ME paths.'
         println '    ' + cyan('2.') + ' Run ' + bold('nextflow run proteobench.nf') + dim('  (runs straight from here on)')
         println ''
     } else {
         println ''
-        warn("${configFile} already exists and was left untouched.")
-        info("Compare it against ${target} and copy over anything you need")
-        info('(new image names, in-container paths, newly-added tools), then re-run:')
+        info("Updated in place; previous version saved to " + dim("${configFile.path}.bak"))
         println '    ' + bold('nextflow run proteobench.nf')
         println ''
     }

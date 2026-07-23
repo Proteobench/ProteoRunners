@@ -44,7 +44,7 @@ That's it — the pipeline sets itself up on the way in:
 
 - **No `config.yaml` yet?** It runs the interactive docker setup wizard first: for each tool, a yes/no prompt to pull its image, then writes straight to `config.yaml` and tells you which `CHANGE_ME` dataset paths are left to fill in. Re-run the same command once you've edited those.
 - **`config.yaml` exists and looks complete** (every enabled tool's docker image — and, for FragPipe, its licensed JARs — is actually present)? Setup is skipped entirely; it goes straight to running jobs.
-- **`config.yaml` exists but something's missing** (e.g. an image got removed, or you enabled a tool without pulling it)? It reruns the wizard for the missing pieces, writes its findings to `config.docker.yaml` (your `config.yaml` is never auto-overwritten), and still runs whatever jobs *are* configured correctly.
+- **`config.yaml` exists but something's missing** (e.g. an image got removed, or a FragPipe JAR went missing)? Setup runs again but only for the tools that are actually incomplete — already-complete tools are kept untouched and tools you never configured are left alone, so you are only prompted for the parts that need redoing. It then updates `config.yaml` in place (keeping a `config.yaml.bak` copy), preserving your `global`/`search_params`/`datasets` and every complete tool verbatim.
 
 Setup-wizard details per tool:
 
@@ -145,11 +145,7 @@ pip install -r requirements.txt
 nextflow run setup.nf       # interactive; writes config.yaml directly on a first run
 ```
 
-If `config.yaml` didn't exist yet, `setup.nf` writes it directly and tells you which dataset `CHANGE_ME` paths to fill in. If it already existed, `setup.nf` writes its findings to `config.docker.yaml` instead — copy over what you need:
-
-```bash
-cp config.docker.yaml config.yaml    # only if setup.nf reported it wrote there instead
-```
+If `config.yaml` didn't exist yet, `setup.nf` writes it directly and tells you which dataset `CHANGE_ME` paths to fill in. If it already existed, `setup.nf` only redoes the tools whose docker setup is incomplete and updates `config.yaml` in place, preserving everything else and saving the previous version as `config.yaml.bak`.
 
 Then:
 
@@ -243,7 +239,7 @@ My_New_Dataset:
   instrument: Orbitrap       # Orbitrap | Astral | timstof | ZenoTOF
 ```
 
-The zip is expected to contain, at its top level: the MS files, exactly one `*.fasta` (+ optionally one decoy fasta with `decoy` in the name), and optionally an `mzml/` subfolder. Re-run `nextflow run setup.nf` — it offers the new dataset (scoped to tools it's relevant to), downloads and unzips it, and writes the resolved `path:`/`fasta:` into `config.yaml`/`config.docker.yaml` automatically.
+The zip is expected to contain, at its top level: the MS files, exactly one `*.fasta` (+ optionally one decoy fasta with `decoy` in the name), and optionally an `mzml/` subfolder. Re-run `nextflow run setup.nf` — it offers the new dataset (scoped to tools it's relevant to), downloads and unzips it, and writes the resolved `path:`/`fasta:` into `config.yaml` automatically.
 
 ---
 
@@ -288,7 +284,7 @@ The `.done` marker causes the pipeline to skip that job on the next run (useful 
 
 | Error message | Likely cause | Fix |
 |---------------|-------------|-----|
-| `Config file not found` (Python runner only; `proteobench.nf` runs setup itself) | `config.yaml` does not exist | `nextflow run setup.nf`, or `cp config.docker.yaml config.yaml` if it already wrote there |
+| `Config file not found` (Python runner only; `proteobench.nf` runs setup itself) | `config.yaml` does not exist | `nextflow run setup.nf` |
 | `still contains 'CHANGE_ME'` | Path not updated in config | Edit `config.yaml` and replace CHANGE_ME |
 | `docker: command not found` / `Cannot connect to the Docker daemon` | Docker not installed, not running, or user lacks permission | Install Docker, start the daemon, add your user to the `docker` group |
 | `docker image not pulled locally` | Image not pulled yet | `nextflow run setup.nf` |

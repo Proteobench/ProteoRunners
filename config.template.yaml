@@ -10,10 +10,12 @@
 #
 # 1. Run: nextflow run setup.nf
 #    This pulls the docker image for each tool you choose, walks you through
-#    the license/token prompts FragPipe and DIA-NN 2.x need, and writes
-#    config.docker.yaml containing only the tools it finished setting up.
-# 2. Copy config.docker.yaml to config.yaml (or start from this file) and
-#    replace every CHANGE_ME with a path on your system (datasets, output_dir).
+#    the license prompts FragPipe and DIA-NN 2.x need, and writes config.yaml
+#    containing only the tools it finished setting up. Re-running it later only
+#    redoes the tools whose docker setup is incomplete and updates config.yaml
+#    in place (keeping a config.yaml.bak copy), leaving everything else as-is.
+# 2. In config.yaml, replace every remaining CHANGE_ME with a path on your
+#    system (datasets, output_dir).
 # 3. Run: python run_proteobench.py --dry-run   to verify before executing.
 #
 # All paths can be absolute (/full/path) or relative to the directory where
@@ -213,9 +215,8 @@ datasets:
 #   extra    — tool-specific options not covered by search_params
 #
 # 'image:' and any *_bin/*_dir path inside it are filled in automatically by
-# `nextflow run setup.nf` — see config.docker.yaml after running it. Only
-# enabled versions are run. Disabling a version is safe — it keeps the
-# configuration for future use without executing the tool.
+# `nextflow run setup.nf`. Only enabled versions are run. Disabling a version
+# is safe — it keeps the configuration for future use without executing the tool.
 
 tools:
 

@@ -22,6 +22,7 @@ Both runners use the same `config.yaml`, the same per-tool parameter logic, and 
 | **Docker** | **every tool — mandatory** | [docs.docker.com/get-docker](https://docs.docker.com/get-docker/) |
 | Python 3.11+ | Both runners | `conda install python=3.11` or [python.org](https://www.python.org/downloads/) |
 | Nextflow 23.10+ | Nextflow runner + docker setup wizard | `curl -s https://get.nextflow.io \| bash` then move to a directory on `$PATH` |
+| `git` | Building the DIA-NN 2.x image only | Usually already installed; see [git-scm.com](https://git-scm.com/downloads) |
 
 Check that each dependency is available:
 ```bash
@@ -50,13 +51,13 @@ Setup-wizard details per tool:
 
 - **MaxQuant, Sage, MetaMorpheus, AlphaDIA** — a yes/no prompt each; a plain `docker pull` if you say yes.
 - **FragPipe** — the `fcyucn/fragpipe` image does **not** include MSFragger, IonQuant, or diaTracer (Nesvilab Academic License, separate from FragPipe's own license). For each of the three, the wizard asks whether you already have it downloaded as a `.zip` or extracted folder; if not, it prints the download URL and lets you skip — FragPipe is written to the config but stays `enabled: false` until all three are present. Re-run to add them later. When you point the wizard at an MSFragger folder, it also copies the `ext/` folder shipped next to the jar (the Thermo `.raw` and Bruker `.d` native readers, run under the mono runtime already in the image) and mounts it at run time, so FragPipe reads `.raw`/`.d` directly; if `ext/` is missing, FragPipe will need mzML input instead. FragPipe also needs decoys already appended to the FASTA (unlike the other tools); if `fasta_decoy:` isn't set for a dataset, one is generated automatically the first time that dataset is searched, via the Philosopher CLI already bundled in the image (the same command the FragPipe GUI's "Add decoys" button runs), and cached next to the source FASTA for reuse.
-- **DIA-NN** — always pulls the free `biocontainers/diann:v1.8.1_cv1` image. It also asks if you have a GitHub account to pull the newer 2.x images from `ghcr.io/bigbio/diann` (see [quantms containers](https://quantmsdiann.quantms.org/containers/)), which are private and need a **GitHub personal access token** with the `read:packages` scope (create one at [github.com/settings/tokens](https://github.com/settings/tokens)). If you decline, only 1.8.1 is configured. Your username/token are saved to a git-ignored `.env` file, not written into any config.
+- **DIA-NN** — always pulls the free `biocontainers/diann:v1.8.1_cv1` image. It also asks whether to build a DIA-NN 2.x image (needed for DDA support and native Thermo `.raw` reading on Linux); if you say yes, it `git clone`s [bigbio/quantms-containers](https://github.com/bigbio/quantms-containers) and runs `docker build` locally — DIA-NN itself is downloaded from the public [vdemichev/DiaNN](https://github.com/vdemichev/DiaNN) releases during the build, so no registry account or token is needed (requires `git` and takes a few minutes). If you decline, only 1.8.1 is configured.
 - **Datasets** — after the tools above are set up, the wizard offers to download benchmark datasets from `nextflow/datasets_catalog.yaml`, scoped to only the datasets relevant to the tools you just enabled (by DDA/DIA acquisition). It asks where to store them (default: `data/`, git-ignored), lists the relevant datasets, and lets you pick `all`, `none`, or specific ones by number. Each dataset is downloaded as a zip and unzipped; the FASTA (and decoy, if present) inside it are detected automatically, and an `mzml/` subfolder is split out into a sibling `<name>_mzml` dataset entry. Real, resolved paths are written into `datasets:`, and each configured tool's `datasets:` list is filled in automatically — no more `CHANGE_ME` for anything that was downloaded. Datasets already present on disk from an earlier run are reused, not re-downloaded. See "Adding a downloadable dataset" below.
 
 Non-interactive / CI use (skips all prompts, uses these flags instead):
 ```bash
 nextflow run proteobench.nf --non_interactive --skip_fragpipe \
-    --diann_user YOUR_GH_USER --diann_token YOUR_GH_TOKEN \
+    --build_diann_v2 --diann_version 2.5.0 \
     --download_datasets all --data_dir /path/to/data
 ```
 `--skip_datasets` skips the dataset step entirely; `--download_datasets` also accepts a comma-separated list of dataset names instead of `all`. With no `--download_datasets` given, non-interactive mode downloads nothing (safe default for CI).
@@ -66,7 +67,7 @@ To force the wizard to run again regardless of completeness (e.g. to add a tool 
 nextflow run setup.nf
 ```
 
-The pipeline reads `config.yaml` from the project root by default. It automatically picks up `global.output_dir` and `global.max_parallel_jobs` from that file.
+The pipeline reads `config.yaml` from the project root by default. Each job writes its actual result files under `global.output_dir` from that file, same as the Python runner. Nextflow's own concurrency (`maxForks`) and the location it publishes `run_summary_nf.tsv` to are separate from that: they default to 6 and `./results` respectively and are not read from `config.yaml` automatically — override them with `--max_parallel_jobs` / `--publish_dir`, or by adding a `nextflow.config` (see [Cluster / HPC execution](#cluster--hpc-execution)).
 
 ### Common options
 
@@ -76,7 +77,8 @@ The pipeline reads `config.yaml` from the project root by default. It automatica
 | `--tool diann` | `--tool` | Restrict run to one tool |
 | `--dataset Entrapment_DIA` | `--dataset` | Restrict run to one dataset |
 | `--no_preflight` | `--no-preflight` | Skip preflight checks before each job |
-| `--max_parallel_jobs 4` | `--max-parallel-jobs` | Override concurrency (default comes from `config.yaml`) |
+| `--max_parallel_jobs 4` | — | Override Nextflow concurrency (default: 6) |
+| `--publish_dir /path` | — | Where `run_summary_nf.tsv` is published (default: `./results`) |
 
 Example — run only DIA-NN jobs, skip preflight:
 
@@ -102,9 +104,9 @@ Jobs that already have a `.done` marker in the output directory are also skipped
 
 ### Output
 
-The Nextflow runner writes results to the same `global.output_dir` as the Python runner. The summary file is named `run_summary_nf.tsv` (vs `run_summary_<timestamp>.tsv` for the Python runner). Both files use identical columns: `tool`, `version`, `dataset`, `success`, `skipped`, `runtime_s`, `output_dir`, `error_msg`.
+Each job's actual result files are written to the same `global.output_dir` (from `config.yaml`) as the Python runner. The summary file, `run_summary_nf.tsv`, is published separately to `./results` by default (override with `--publish_dir`) — it is not written inside `global.output_dir` unless you point `--publish_dir` there too. It uses the same columns as the Python runner's `run_summary_<timestamp>.tsv`: `tool`, `version`, `dataset`, `success`, `skipped`, `runtime_s`, `output_dir`, `error_msg`.
 
-Nextflow task working directories are placed under `<output_dir>/nf_work/`. To delete them after a successful run:
+Nextflow task working directories are placed under Nextflow's default `work/` directory in the project root (override with `-w /path/to/dir`). To delete them after a successful run:
 
 ```bash
 nextflow clean -f
@@ -118,7 +120,7 @@ nextflow run proteobench.nf -log /path/to/results/.nextflow.log
 
 ### Cluster / HPC execution
 
-To run on SLURM (or another executor), extend `nextflow.config` (which already exists in the project root) with executor settings:
+To run on SLURM (or another executor), create a `nextflow.config` in the project root with executor settings:
 
 ```groovy
 // append to nextflow.config
@@ -167,7 +169,7 @@ python run_proteobench.py
 
 | Tool | Acquisition | Input format | Docker image |
 |------|-------------|-------------|----------------|
-| DIA-NN | DDA (v2.1+), DIA | raw, mzML | `biocontainers/diann:v1.8.1_cv1` (public) or `ghcr.io/bigbio/diann:2.x` (GitHub token) |
+| DIA-NN | DDA (v2.1+), DIA | raw, mzML | `biocontainers/diann:v1.8.1_cv1` (public) or `diann:2.x` (built locally from [bigbio/quantms-containers](https://github.com/bigbio/quantms-containers)) |
 | AlphaDIA | DIA | raw, mzML, .d | `mannlabs/alphadia:latest` |
 | Sage | DDA | mzML, MGF | `ghcr.io/lazear/sage:latest` |
 | FragPipe | DDA, DIA | raw, mzML, .d | `fcyucn/fragpipe:latest` + licensed MSFragger/IonQuant/diaTracer JARs |
@@ -180,7 +182,7 @@ All six images are pulled by the setup wizard (run automatically by `nextflow ru
 
 ## Adding a docker image tag setup.nf didn't pull
 
-`setup.nf` always pulls `:latest` (or, for DIA-NN, whichever versions you chose). To pin or add a different tag, edit `config.yaml` directly — add a new entry under that tool's `versions:` list with the new `image:` tag and `enabled: true`. Any `*_bin`/`*_dir`/`fragpipe_root` path may need updating too if the new image version changes its internal layout; `docker run --rm --entrypoint find <image> / -maxdepth 4 -iname <binary-name>` (as `setup.nf` does internally) will locate it.
+`setup.nf` always pulls `:latest` (except DIA-NN, which is described above, and MaxQuant, which pulls two fixed versions: `2.6.3.0` and `2.8.1.0`). To pin or add a different tag, edit `config.yaml` directly — add a new entry under that tool's `versions:` list with the new `image:` tag and `enabled: true`. Any `*_bin`/`*_dir`/`fragpipe_root` path may need updating too if the new image version changes its internal layout; `docker run --rm --entrypoint find <image> / -maxdepth 4 -iname <binary-name>` (as `setup.nf` does internally) will locate it.
 
 ---
 
@@ -245,15 +247,16 @@ The zip is expected to contain, at its top level: the MS files, exactly one `*.f
 
 ## Adding a new tool version
 
-Copy an existing version block, update `id` and the binary path, and set `enabled: true`:
+Copy an existing version block, update `id`, `image`, and the tool's in-container binary path, then set `enabled: true`. Each tool uses its own key for that path — `diann_bin` (DIA-NN), `sage_bin` (Sage), `maxquant_dll` (MaxQuant), `fragpipe_root` (FragPipe); AlphaDIA and MetaMorpheus need no path key:
 
 ```yaml
 tools:
   diann:
     versions:
       - id: "2.6.0"                              # new version
-        binary: /opt/diann-2.6.0/diann-linux     # path to the binary
-        supports_dda: true
+        image: diann:2.6.0                       # docker image tag
+        diann_bin: /usr/diann-2.6.0/diann        # in-container binary path
+        supports_dda: true                       # DIA-NN only: whether this build supports DDA
         enabled: true
 ```
 

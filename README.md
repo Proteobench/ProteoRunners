@@ -2,14 +2,7 @@
 
 This pipeline runs multiple proteomics search engines on ProteoBench benchmark datasets and collects output files for downstream submission to [ProteoBench](https://proteobench.cubimed.rub.de/). It supports DIA-NN, AlphaDIA, Sage, FragPipe, MaxQuant, and MetaMorpheus across DDA and DIA acquisition modes.
 
-Two equivalent runners are provided:
-
-| Runner | Entry point | Parallelism | Best for |
-|--------|------------|-------------|---------|
-| Nextflow | `proteobench.nf` | Nextflow executor (local, SLURM, …) | **Recommended** — cluster runs, reproducibility, resumable, sets itself up automatically |
-| Python | `run_proteobench.py` | `ThreadPoolExecutor` on one machine | Interactive use, dry-run preview |
-
-Both runners use the same `config.yaml`, the same per-tool parameter logic, and produce the same output directory layout and summary TSV. `proteobench.nf` is the simpler of the two to get started with: it checks its own docker setup and runs the setup wizard itself when needed, so `nextflow run proteobench.nf` is the only command most users ever need to type. The Python runner is a thinner, non-Nextflow alternative for local/interactive use; it does not run the setup wizard for you, so run `nextflow run setup.nf` once yourself before using it.
+Everything runs through Nextflow (`proteobench.nf`), on a local machine or on a cluster (SLURM, …): it checks its own docker setup and runs the setup wizard itself when needed, so `nextflow run proteobench.nf` is the only command most users ever need to type.
 
 ---
 
@@ -20,8 +13,8 @@ Both runners use the same `config.yaml`, the same per-tool parameter logic, and 
 | Dependency | Required for | Install |
 |------------|-------------|---------|
 | **Docker** | **every tool — mandatory** | [docs.docker.com/get-docker](https://docs.docker.com/get-docker/) |
-| Python 3.11+ | Both runners | `conda install python=3.11` or [python.org](https://www.python.org/downloads/) |
-| Nextflow 23.10+ | Nextflow runner + docker setup wizard | `curl -s https://get.nextflow.io \| bash` then move to a directory on `$PATH` |
+| Python 3.11+ | Job enumeration used internally by the pipeline | `conda install python=3.11` or [python.org](https://www.python.org/downloads/) |
+| Nextflow 23.10+ | Running the pipeline and setup wizard | `curl -s https://get.nextflow.io \| bash` then move to a directory on `$PATH` |
 | `git` | Building the DIA-NN 2.x image only | Usually already installed; see [git-scm.com](https://git-scm.com/downloads) |
 
 Check that each dependency is available:
@@ -35,7 +28,7 @@ Your user must be able to run `docker` without `sudo` (on Linux: `sudo usermod -
 
 ---
 
-## Quick start (Nextflow runner — recommended)
+## Quick start
 
 ```bash
 nextflow run proteobench.nf
@@ -67,18 +60,18 @@ To force the wizard to run again regardless of completeness (e.g. to add a tool 
 nextflow run setup.nf
 ```
 
-The pipeline reads `config.yaml` from the project root by default. Each job writes its actual result files under `global.output_dir` from that file, same as the Python runner. Nextflow's own concurrency (`maxForks`) and the location it publishes `run_summary_nf.tsv` to are separate from that: they default to 6 and `./results` respectively and are not read from `config.yaml` automatically — override them with `--max_parallel_jobs` / `--publish_dir`, or by adding a `nextflow.config` (see [Cluster / HPC execution](#cluster--hpc-execution)).
+The pipeline reads `config.yaml` from the project root by default. Each job writes its actual result files under `global.output_dir` from that file. Nextflow's own concurrency (`maxForks`) and the location it publishes `run_summary_nf.tsv` to are separate from that: they default to 6 and `./results` respectively and are not read from `config.yaml` automatically — override them with `--max_parallel_jobs` / `--publish_dir`, or by adding a `nextflow.config` (see [Cluster / HPC execution](#cluster--hpc-execution)).
 
 ### Common options
 
-| Flag | Equivalent Python flag | Description |
-|------|----------------------|-------------|
-| `--config /path/to/config.yaml` | `--config` | Path to config file (default: `config.yaml` next to `proteobench.nf`) |
-| `--tool diann` | `--tool` | Restrict run to one tool |
-| `--dataset Entrapment_DIA` | `--dataset` | Restrict run to one dataset |
-| `--no_preflight` | `--no-preflight` | Skip preflight checks before each job |
-| `--max_parallel_jobs 4` | — | Override Nextflow concurrency (default: 6) |
-| `--publish_dir /path` | — | Where `run_summary_nf.tsv` is published (default: `./results`) |
+| Flag | Description |
+|------|-------------|
+| `--config /path/to/config.yaml` | Path to config file (default: `config.yaml` next to `proteobench.nf`) |
+| `--tool diann` | Restrict run to one tool |
+| `--dataset Entrapment_DIA` | Restrict run to one dataset |
+| `--no_preflight` | Skip preflight checks before each job |
+| `--max_parallel_jobs 4` | Override Nextflow concurrency (default: 6) |
+| `--publish_dir /path` | Where `run_summary_nf.tsv` is published (default: `./results`) |
 
 Example — run only DIA-NN jobs, skip preflight:
 
@@ -104,7 +97,7 @@ Jobs that already have a `.done` marker in the output directory are also skipped
 
 ### Output
 
-Each job's actual result files are written to the same `global.output_dir` (from `config.yaml`) as the Python runner. The summary file, `run_summary_nf.tsv`, is published separately to `./results` by default (override with `--publish_dir`) — it is not written inside `global.output_dir` unless you point `--publish_dir` there too. It uses the same columns as the Python runner's `run_summary_<timestamp>.tsv`: `tool`, `version`, `dataset`, `success`, `skipped`, `runtime_s`, `output_dir`, `error_msg`.
+Each job's actual result files are written to `global.output_dir` (from `config.yaml`). The summary file, `run_summary_nf.tsv`, is published separately to `./results` by default (override with `--publish_dir`) — it is not written inside `global.output_dir` unless you point `--publish_dir` there too. Columns: `tool`, `version`, `dataset`, `success`, `skipped`, `runtime_s`, `output_dir`, `error_msg`.
 
 Nextflow task working directories are placed under Nextflow's default `work/` directory in the project root (override with `-w /path/to/dir`). To delete them after a successful run:
 
@@ -130,38 +123,6 @@ process.clusterOptions = '--mem=64G --time=04:00:00'
 ```
 
 See the [Nextflow executor documentation](https://www.nextflow.io/docs/latest/executor.html) for other executors (PBS, LSF, Kubernetes, etc.). No changes to `proteobench.nf` itself are needed.
-
----
-
-## Quick start (Python runner)
-
-The Python runner does not run the setup wizard itself — run it once via Nextflow first:
-
-```bash
-# Option A: conda
-conda env create -f environment.yml
-conda activate proteobench-pipeline
-# Option B: pip
-pip install -r requirements.txt
-
-nextflow run setup.nf       # interactive; writes config.yaml directly on a first run
-```
-
-If `config.yaml` didn't exist yet, `setup.nf` writes it directly and tells you which dataset `CHANGE_ME` paths to fill in. If it already existed, `setup.nf` only redoes the tools whose docker setup is incomplete and updates `config.yaml` in place, preserving everything else and saving the previous version as `config.yaml.bak`.
-
-Then:
-
-```bash
-# See which tools and datasets are configured
-python run_proteobench.py --list-tools
-python run_proteobench.py --list-datasets
-
-# Preview all planned jobs and their full CLI commands (nothing is executed)
-python run_proteobench.py --dry-run
-
-# Execute all enabled jobs
-python run_proteobench.py
-```
 
 ---
 
@@ -287,7 +248,6 @@ The `.done` marker causes the pipeline to skip that job on the next run (useful 
 
 | Error message | Likely cause | Fix |
 |---------------|-------------|-----|
-| `Config file not found` (Python runner only; `proteobench.nf` runs setup itself) | `config.yaml` does not exist | `nextflow run setup.nf` |
 | `still contains 'CHANGE_ME'` | Path not updated in config | Edit `config.yaml` and replace CHANGE_ME |
 | `docker: command not found` / `Cannot connect to the Docker daemon` | Docker not installed, not running, or user lacks permission | Install Docker, start the daemon, add your user to the `docker` group |
 | `docker image not pulled locally` | Image not pulled yet | `nextflow run setup.nf` |

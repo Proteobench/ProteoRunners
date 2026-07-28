@@ -2,13 +2,13 @@
 
 This pipeline runs multiple proteomics search engines on ProteoBench benchmark datasets and collects output files for downstream submission to [ProteoBench](https://proteobench.cubimed.rub.de/). It supports DIA-NN, AlphaDIA, Sage, FragPipe, MaxQuant, and MetaMorpheus across DDA and DIA acquisition modes.
 
-Everything runs through Nextflow (`proteobench.nf`), on a local machine or on a cluster (SLURM, …): it checks its own docker setup and runs the setup wizard itself when needed, so `nextflow run proteobench.nf` is the only command most users ever need to type.
+Everything runs through Nextflow (`proteobench.nf`), on a local machine or on a cluster (SLURM, …): it checks its own docker setup and runs the setup wizard itself when needed. Pull a tagged release directly from GitHub — no `git clone` needed — and `nextflow run ProteoBench/ProteoRunners -r v1.0.0` is the only command most users ever have to type.
 
 ---
 
 ## Prerequisites
 
-**Docker is required.** Every search engine (DIA-NN, AlphaDIA, Sage, FragPipe, MaxQuant, MetaMorpheus) now runs from a docker image — there is nothing left to compile or install natively for any tool. Install Docker before doing anything else:
+**Docker is required.** Every search engine (DIA-NN, AlphaDIA, Sage, FragPipe, MaxQuant, MetaMorpheus) now runs from a docker image, there is nothing left to compile or install natively for any tool.
 
 | Dependency | Required for | Install |
 |------------|-------------|---------|
@@ -30,7 +30,19 @@ Your user must be able to run `docker` without `sudo` (on Linux: `sudo usermod -
 
 ## Quick start
 
+Run the latest release directly from GitHub:
+
 ```bash
+nextflow run ProteoBench/ProteoRunners -r v1.0.0 --config ./config.yaml
+```
+
+Nextflow caches the pipeline code itself under `~/.nextflow/assets/ProteoBench/ProteoRunners`, not your current directory. `config.yaml`, downloaded datasets, and results all default to living next to the pipeline code — i.e. inside that shared cache, not your project — so when running a pulled release, always pass `--config` (as above) and, once you're producing output, `--publish_dir` and `--data_dir` too, pointing them at paths in your own working directory.
+
+Developing the pipeline itself? Clone the repo and run it from inside your checkout instead — then these defaults resolve to the repo root, matching every other example in this README:
+
+```bash
+git clone https://github.com/ProteoBench/ProteoRunners.git
+cd ProteoRunners
 nextflow run proteobench.nf
 ```
 
@@ -38,7 +50,7 @@ That's it — the pipeline sets itself up on the way in:
 
 - **No `config.yaml` yet?** It runs the interactive docker setup wizard first: for each tool, a yes/no prompt to pull its image, then writes straight to `config.yaml` and tells you which `CHANGE_ME` dataset paths are left to fill in. Re-run the same command once you've edited those.
 - **`config.yaml` exists and looks complete** (every enabled tool's docker image — and, for FragPipe, its licensed JARs — is actually present)? Setup is skipped entirely; it goes straight to running jobs.
-- **`config.yaml` exists but something's missing** (e.g. an image got removed, or a FragPipe JAR went missing)? Setup runs again but only for the tools that are actually incomplete — already-complete tools are kept untouched and tools you never configured are left alone, so you are only prompted for the parts that need redoing. It then updates `config.yaml` in place (keeping a `config.yaml.bak` copy), preserving your `global`/`search_params`/`datasets` and every complete tool verbatim.
+- **`config.yaml` exists but something's missing** (e.g. an image got removed, or a FragPipe JAR went missing)? Setup runs again but only for the tools that are actually incomplete. Already-complete tools are kept untouched and tools you never configured are left alone, so you are only prompted for the parts that need redoing. It then updates `config.yaml` in place (keeping a `config.yaml.bak` copy), preserving your `global`/`search_params`/`datasets` and every complete tool verbatim.
 
 Setup-wizard details per tool:
 
@@ -54,6 +66,20 @@ nextflow run proteobench.nf --non_interactive --skip_fragpipe \
     --download_datasets all --data_dir /path/to/data
 ```
 `--skip_datasets` skips the dataset step entirely; `--download_datasets` also accepts a comma-separated list of dataset names instead of `all`. With no `--download_datasets` given, non-interactive mode downloads nothing (safe default for CI).
+
+Available dataset names (source of truth: [`nextflow/datasets_catalog.yaml`](nextflow/datasets_catalog.yaml)):
+
+| Name | Acquisition | Format | Instrument |
+|------|------|------|------|
+| `HYE_DDA_Orbitrap` | DDA | raw | Orbitrap |
+| `HYE_DDA_Astral` | DDA | raw | Astral |
+| `HYE_Astral` | DIA | raw | Astral |
+| `HYE_Astral_Single_Cell` | DIA | raw | Astral |
+| `HYE_AIF` | DIA | raw | Orbitrap |
+| `HYE_diaPASEF` | DIA | d | timstof |
+| `HYE_ZenoSWATH` | DIA | wiff | ZenoTOF |
+| `PYE_diaPASEF` | DIA | d | timstof |
+| `Entrapment_DIA` | DIA | raw | Orbitrap |
 
 To force the wizard to run again regardless of completeness (e.g. to add a tool you skipped), run it directly instead of through `proteobench.nf`:
 ```bash
@@ -113,10 +139,10 @@ nextflow run proteobench.nf -log /path/to/results/.nextflow.log
 
 ### Cluster / HPC execution
 
-To run on SLURM (or another executor), create a `nextflow.config` in the project root with executor settings:
+To run on SLURM (or another executor), add executor settings to a `nextflow.config` in the directory you run `nextflow run` from (Nextflow merges it with the repo's own `nextflow.config` automatically — this works the same whether you're running from a clone or a pulled release):
 
 ```groovy
-// append to nextflow.config
+// nextflow.config in your working directory
 process.executor      = 'slurm'
 process.queue         = 'gpu'
 process.clusterOptions = '--mem=64G --time=04:00:00'

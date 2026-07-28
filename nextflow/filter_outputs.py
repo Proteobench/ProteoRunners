@@ -23,8 +23,9 @@ from pathlib import Path
 # name). FragPipe's runner always uses FragPipe's built-in DIA workflows,
 # which quantify via DIA-NN (report.tsv/.parquet under dia-quant-output/)
 # rather than IonQuant's combined_ion.tsv (DDA only) — verified against a real
-# Entrapment_DIA/fragpipe_v24.0 run. sage has no real run in results/ to check
-# against; its entry is TOML-only and unverified.
+# Entrapment_DIA/fragpipe_v24.0 run. sage's datapoint file is lfq.tsv, written
+# by Sage's quant.lfq output (now always enabled, see runners/sage.py) — no
+# real run in results/ has this yet since existing runs predate that change.
 # metamorpheus's params_file upload is "search_task_config.toml + version_result.txt"
 # (two files: any TOML settings file, plus a plain-text file containing a
 # version/results summary — ProteoBench tells them apart by content, not name,
@@ -38,7 +39,7 @@ KEEP_BASENAMES = {
     "maxquant":     {"evidence.txt", "mqpar.xml"},
     "diann":        {"report.tsv", "report.parquet", "report.log.txt"},
     "alphadia":     {"precursors.tsv", "precursors.parquet", "precursor.matrix.tsv", "log.txt"},
-    "sage":         {"results.sage.tsv", "results.json", "sage_config.json"},
+    "sage":         {"lfq.tsv", "results.json", "sage_config.json"},
     "metamorpheus": {"AllQuantifiedPeaks.tsv", "SearchTask.toml", "results.txt"},
 }
 

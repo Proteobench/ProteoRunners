@@ -9,11 +9,11 @@ Supported search_params keys:
   missed_cleavages, min_peptide_length, max_peptide_length,
   fixed_mods (→ static_mods), variable_mods,
   max_mods_per_peptide (→ database.max_variable_mods),
-  min_charge, max_charge, fragment_mz_range,
-  match_between_runs (→ quant.lfq.combine_charge_states; Sage LFQ performs MBR-like alignment)
+  min_charge, max_charge, fragment_mz_range
 
 Not mapped (no separate concept in Sage):
-  fdr_peptide, fdr_protein, precursor_mz_range
+  fdr_peptide, fdr_protein, precursor_mz_range, match_between_runs
+  (Sage's LFQ always runs with its own MBR-like alignment; not toggable)
 """
 
 from __future__ import annotations
@@ -126,8 +126,7 @@ class SageRunner(BaseRunner):
             "mzml_paths":                 [str(f) for f in input_files],
         }
 
-        if p["mbr"]:
-            cfg["quant"] = {"lfq": True, "lfq_settings": {"combine_charge_states": True}}
+        cfg["quant"] = {"lfq": True, "lfq_settings": {"combine_charge_states": False}}
 
         extra = self.extra or {}
         if extra.get("write_pin"):

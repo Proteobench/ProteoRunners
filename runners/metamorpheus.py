@@ -15,6 +15,7 @@ Supported search_params keys:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -23,6 +24,35 @@ from .base import DDA, ENZYME_MAP, MOD_REGISTRY, BaseRunner, infer_condition
 # MetaMorpheus mod category + name pairs for the ListOfMods fields
 _MM_MOD_CATEGORY_FIXED    = "Common Fixed"
 _MM_MOD_CATEGORY_VARIABLE = "Common Variable"
+
+_VERSION_LINE_RE = re.compile(r"^MetaMorpheus: version .*$", re.MULTILINE)
+_mm_release_version_cache: dict[str, str | None] = {}
+
+
+def _mm_release_version(image: str) -> str | None:
+    """The real build the given image was compiled from.
+
+    GlobalVariables.SetMetaMorpheusVersion() prints "Not a release version."
+    whenever the assembly's AssemblyVersion is the unstamped default
+    (1.0.0.0) -- true for this image, since it isn't built via the official
+    tagged-release pipeline. `CMD.dll --version` separately reports an
+    informational version that does carry the git commit it was built from
+    (e.g. "1.0.0+<sha>"), which is what we substitute in its place. Cached
+    per image since it never changes across jobs in a run.
+    """
+    if image not in _mm_release_version_cache:
+        version = None
+        try:
+            r = subprocess.run(
+                ["docker", "run", "--rm", image, "--version"],
+                capture_output=True, text=True, timeout=60, check=False,
+            )
+            m = re.search(r"^CMD\s+(\S+)", r.stdout, re.MULTILINE)
+            version = m.group(1) if m else None
+        except (subprocess.SubprocessError, OSError):
+            pass
+        _mm_release_version_cache[image] = version
+    return _mm_release_version_cache[image]
 
 
 def _mm_mods_string(mod_names: list[str], registry_key: str, category: str) -> str:
@@ -203,6 +233,19 @@ FragmentationTerminus = "Both"
 
     def _docker_host_dirs(self) -> list[str]:
         return sorted(set(super()._docker_host_dirs()) | {str(self._mm_settings_dir())})
+
+    def post_run_hook(
+        self, input_files: list[Path], output_dir: Path, success: bool, error_msg: str
+    ) -> tuple[bool, str]:
+        if success:
+            version = _mm_release_version(self.docker_image())
+            if version:
+                for results_txt in output_dir.rglob("results.txt"):
+                    text = results_txt.read_text()
+                    patched = _VERSION_LINE_RE.sub(f"MetaMorpheus: version {version}", text, count=1)
+                    if patched != text:
+                        results_txt.write_text(patched)
+        return success, error_msg
 
     def _write_experimental_design(self, input_files: list[Path]) -> bool:
         """Write MetaMorpheus's ExperimentalDesign.tsv next to the spectra files.

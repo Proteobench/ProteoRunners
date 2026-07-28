@@ -264,7 +264,7 @@ tools:
   maxquant:
     versions:
       - id: "2.6.3.0"
-        image: quay.io/medbioinf/maxquant:latest
+        image: quay.io/medbioinf/maxquant:2.6.3.0
         maxquant_dll: /opt/MaxQuant_v2.6.3.0/bin/MaxQuantCmd.dll
         enabled: true
 

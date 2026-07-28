@@ -420,9 +420,11 @@ workflow SETUP {
     if (!firstRun && !incompleteTools.contains('maxquant')) {
         if (existingToolBlocks.maxquant) ok('MaxQuant already set up — skipping.')
         else warn('MaxQuant not configured — skipping (add it via a fresh setup).')
-    } else if (askYesNo('Pull MaxQuant? ' + dim('(quay.io/medbioinf/maxquant:latest + :2.8.1.0, Max Planck academic license)'), true)) {
+    } else if (askYesNo('Pull MaxQuant? ' + dim('(quay.io/medbioinf/maxquant:2.6.3.0 + :2.8.1.0, Max Planck academic license)'), true)) {
         results.maxquant = []
-        ['quay.io/medbioinf/maxquant:latest', 'quay.io/medbioinf/maxquant:2.8.1.0'].each { mqImage ->
+        // Pin explicit version tags: :latest drifts (it currently points at 2.8.1.0),
+        // which would break the recorded maxquant_dll path for the older version.
+        ['quay.io/medbioinf/maxquant:2.6.3.0', 'quay.io/medbioinf/maxquant:2.8.1.0'].each { mqImage ->
             if (run(['docker', 'pull', mqImage]) == 0) {
                 def found = firstLine(capture(['docker', 'run', '--rm', '--entrypoint', 'find', mqImage, '/opt', '-maxdepth', '3', '-iname', 'MaxQuantCmd.dll']))
                 def dll = found ?: '/opt/MaxQuant/bin/MaxQuantCmd.dll'

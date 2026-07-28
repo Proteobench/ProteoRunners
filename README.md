@@ -171,7 +171,7 @@ python run_proteobench.py
 | AlphaDIA | DIA | raw, mzML, .d | `mannlabs/alphadia:latest` |
 | Sage | DDA | mzML, MGF | `ghcr.io/lazear/sage:latest` |
 | FragPipe | DDA, DIA | raw, mzML, .d | `fcyucn/fragpipe:latest` + licensed MSFragger/IonQuant/diaTracer JARs |
-| MaxQuant | DDA, DIA | raw | `quay.io/medbioinf/maxquant:latest` |
+| MaxQuant | DDA, DIA | raw | `quay.io/medbioinf/maxquant:2.6.3.0`, `quay.io/medbioinf/maxquant:2.8.1.0` |
 | MetaMorpheus | DDA | raw, mzML | `smithchemwisc/metamorpheus:latest` |
 
 All six images are pulled by the setup wizard (run automatically by `nextflow run proteobench.nf`, or directly via `nextflow run setup.nf`) — see [Quick start](#quick-start-nextflow-runner--recommended) above. There is no native/manual install path any more; every tool runs from its image.

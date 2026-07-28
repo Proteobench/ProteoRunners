@@ -331,13 +331,15 @@ tools:
 
   # ---------------------------------------------------------------------------
   # MaxQuant — supports DDA and DIA
-  # Docker image: quay.io/medbioinf/maxquant:latest (Max Planck academic license)
+  # Docker images: quay.io/medbioinf/maxquant:2.6.3.0 and :2.8.1.0 (Max Planck
+  # academic license). Pin explicit version tags, not :latest — :latest drifts
+  # between MaxQuant versions and would break the recorded maxquant_dll path.
   # Set up with: nextflow run setup.nf
   # ---------------------------------------------------------------------------
   maxquant:
     versions:
       - id: "2.6.3.0"
-        image: quay.io/medbioinf/maxquant:latest
+        image: quay.io/medbioinf/maxquant:2.6.3.0
         maxquant_dll: /opt/MaxQuant_v2.6.3.0/bin/MaxQuantCmd.dll   # in-container path
         enabled: false
       - id: "2.8.1.0"

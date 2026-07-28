@@ -33,7 +33,7 @@ Your user must be able to run `docker` without `sudo` (on Linux: `sudo usermod -
 Run the latest release directly from GitHub:
 
 ```bash
-nextflow run ProteoBench/ProteoRunners -r v1.0.0 --config ./config.yaml
+nextflow run ProteoBench/ProteoRunners -r v1.0.1 --config ./config.yaml
 ```
 
 Nextflow caches the pipeline code itself under `~/.nextflow/assets/ProteoBench/ProteoRunners`, not your current directory. `config.yaml`, downloaded datasets, and results all default to living next to the pipeline code — i.e. inside that shared cache, not your project — so when running a pulled release, always pass `--config` (as above) and, once you're producing output, `--publish_dir` and `--data_dir` too, pointing them at paths in your own working directory.

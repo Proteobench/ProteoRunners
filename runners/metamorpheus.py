@@ -14,9 +14,11 @@ Supported search_params keys:
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
-from .base import DDA, ENZYME_MAP, MOD_REGISTRY, BaseRunner
+from .base import DDA, ENZYME_MAP, MOD_REGISTRY, BaseRunner, infer_condition
 
 # MetaMorpheus mod category + name pairs for the ListOfMods fields
 _MM_MOD_CATEGORY_FIXED    = "Common Fixed"
@@ -71,13 +73,12 @@ class MetaMorpheusRunner(BaseRunner):
             "max_mods":           sp.get("max_mods_per_peptide", 3),
             "fdr":                sp.get("fdr_psm", 0.01),
             "mbr":                sp.get("match_between_runs", False),
-            "normalize":          sp.get("normalize", True),
             "min_charge":         sp.get("min_charge", 1),
             "max_charge":         sp.get("max_charge", 4),
             "threads":            self.global_cfg.get("threads_per_job", 16),
         }
 
-    def _write_search_task(self, output_dir: Path) -> Path:
+    def _write_search_task(self, output_dir: Path, normalize: bool) -> Path:
         p = self.map_params()
 
         toml_content = f"""\
@@ -87,7 +88,7 @@ TaskType = "Search"
 DoParsimony = true
 NoOneHitWonders = false
 ModPeptidesAreDifferent = false
-Normalize = {str(p['normalize']).lower()}
+Normalize = {str(normalize).lower()}
 QuantifyPpmTol = {float(p['precursor_tol_ppm'])}
 MatchBetweenRuns = {str(p['mbr']).lower()}
 DoLabelFreeQuantification = true
@@ -121,8 +122,18 @@ TrimMs1Peaks = false
 TrimMsMsPeaks = true
 
 [CommonParameters.PrecursorDeconvolutionParameters]
+DeconvolutionType = "ClassicDeconvolution"
 MinAssumedChargeState = {p['min_charge']}
 MaxAssumedChargeState = {p['max_charge']}
+Polarity = "Positive"
+AverageResidueModel = "Averagine"
+
+[CommonParameters.ProductDeconvolutionParameters]
+DeconvolutionType = "ClassicDeconvolution"
+MinAssumedChargeState = {p['min_charge']}
+MaxAssumedChargeState = {p['max_charge']}
+Polarity = "Positive"
+AverageResidueModel = "Averagine"
 
 [CommonParameters.DigestionParams]
 MaxMissedCleavages = {p['missed_cleavages']}
@@ -138,17 +149,102 @@ FragmentationTerminus = "Both"
         task_path.write_text(toml_content)
         return task_path
 
-    def subprocess_stdin(self) -> bytes:
-        # MetaMorpheus prompts to accept the Thermo RAW file license on first use.
-        return b"y\n"
+    def _mm_settings_dir(self) -> Path:
+        # ponytail: -u <host uid> can't write the image's baked-in /MetaMorpheus
+        # dir (settings.toml, CustomAminoAcids, ...) at startup. --mmsettings
+        # points MetaMorpheus at a writable dir instead. MetaMorpheus normally
+        # self-populates it (copies the built-in Data/Mods/etc.) on first use,
+        # but only if the dir doesn't already exist -- and Docker would create
+        # an empty one as root on first mount. So seed it ourselves, once,
+        # as our own uid; shared across runs so it only happens once total.
+        d = Path(self.global_cfg["output_dir"]) / ".metamorpheus_data"
+        if not (d / "Data" / "Crosslinkers.tsv").exists():
+            d.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                [
+                    "docker", "run", "--rm", "-u", f"{os.getuid()}:{os.getgid()}",
+                    "--entrypoint", "sh",
+                    "-v", f"{d}:{d}",
+                    self.docker_image(),
+                    "-c", f"cp -r /MetaMorpheus/. {d}/",
+                ],
+                check=True,
+            )
+        self._ensure_custom_trypsin_protease(d)
+        self._ensure_thermo_licence_accepted(d)
+        return d
+
+    def _ensure_thermo_licence_accepted(self, mm_settings_dir: Path) -> None:
+        # ponytail: for .raw inputs, MetaMorpheus otherwise blocks on an
+        # interactive Thermo RawFileReader licence prompt on stdin -- which a
+        # Nextflow-launched subprocess has no reliable way to answer. Writing
+        # its own settings.toml with the accepted flag skips the prompt
+        # entirely (verified empirically), no piped "y" needed.
+        settings_toml = mm_settings_dir / "settings.toml"
+        if not settings_toml.exists():
+            settings_toml.write_text(
+                "WriteExcelCompatibleTSVs = false\n"
+                "UserHasAgreedToThermoRawFileReaderLicence = true\n"
+            )
+
+    def _ensure_custom_trypsin_protease(self, mm_settings_dir: Path) -> None:
+        # ponytail: this MetaMorpheus build's built-in "trypsin" cuts before
+        # proline too (no restriction) -- there's no restricted variant
+        # shipped under any name. Append one directly to its own (old,
+        # 10-column) proteases.tsv format, verified empirically against the
+        # running image. Idempotent: skipped once the row is present.
+        proteases_tsv = mm_settings_dir / "ProteolyticDigestion" / "proteases.tsv"
+        name = "trypsin (don't cleave before proline)"
+        content = proteases_tsv.read_text()
+        if name in content:
+            return
+        row = f'{name}\t"K[P]|,R[P]|"\t\t\tfull\tMS:1001313\tTrypsin\t(?<=[KR])(?!P)\t\t\n'
+        proteases_tsv.write_text(content.rstrip("\n") + "\n" + row)
+
+    def _docker_host_dirs(self) -> list[str]:
+        return sorted(set(super()._docker_host_dirs()) | {str(self._mm_settings_dir())})
+
+    def _write_experimental_design(self, input_files: list[Path]) -> bool:
+        """Write MetaMorpheus's ExperimentalDesign.tsv next to the spectra files.
+
+        Required for label-free normalization (search_params.normalize=true);
+        without it MetaMorpheus silently skips quantification entirely, so
+        AllQuantifiedPeaks.tsv never gets written at all. Condition is parsed
+        from the "Condition_X" filename convention shared by every dataset in
+        this pipeline (see infer_condition). Each file is treated as its own
+        biological replicate within its condition, since nothing in these
+        filenames reliably distinguishes true biological vs. technical
+        replicates beyond that.
+
+        Returns False (caller should fall back to Normalize=false) if any
+        file's condition can't be determined.
+        """
+        conditions = [infer_condition(f.name) for f in input_files]
+        if any(c is None for c in conditions):
+            return False
+
+        counters: dict[str, int] = {}
+        rows = ["FileName\tCondition\tBiorep\tFraction\tTechrep"]
+        for f, cond in zip(input_files, conditions):
+            counters[cond] = counters.get(cond, 0) + 1
+            rows.append(f"{f.name}\t{cond}\t{counters[cond]}\t1\t1")
+
+        design_path = input_files[0].parent / "ExperimentalDesign.tsv"
+        design_path.write_text("\n".join(rows) + "\n")
+        return True
 
     def build_command(self, input_files: list[Path], fasta: Path, output_dir: Path) -> list[str]:
-        task_path = self._write_search_task(output_dir)
+        wants_normalize = self.search_params.get("normalize", True)
+        normalize = wants_normalize and (
+            not input_files or self._write_experimental_design(input_files)
+        )
+        task_path = self._write_search_task(output_dir, normalize=normalize)
         cmd = self.docker_run_prefix(self.docker_image())
         cmd += [
             "-t", str(task_path),
             "-d", str(fasta),
             "-s", *[str(f) for f in input_files],
             "-o", str(output_dir),
+            "--mmsettings", str(self._mm_settings_dir()),
         ]
         return cmd

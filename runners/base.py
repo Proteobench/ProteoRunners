@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import logging
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -39,6 +40,19 @@ def infer_acquisition(dataset_name: str, dataset_cfg: dict) -> str:
     if explicit in (DDA, DIA):
         return explicit
     return DDA if "DDA" in dataset_name.upper() else DIA
+
+
+_CONDITION_RE = re.compile(r"Condition_([A-Za-z0-9]+)")
+
+
+def infer_condition(filename: str) -> str | None:
+    """Extract the "Condition_X" label embedded in every ProteoBench HYE-style
+    filename (e.g. "LFQ_Orbitrap_DDA_Condition_A_Sample_Alpha_01.raw" -> "A").
+    Verified against every dataset under configs/*.yaml, DDA and DIA,
+    Orbitrap and Astral alike. Returns None if the filename doesn't match.
+    """
+    m = _CONDITION_RE.search(filename)
+    return m.group(1) if m else None
 
 
 # Maps human-readable mod names (MaxQuant convention) to tool-specific representations.
@@ -94,16 +108,21 @@ MOD_REGISTRY: dict[str, dict[str, Any]] = {
 ENZYME_MAP = {
     # sage_c_terminal: True = enzyme cuts C-terminally (default for trypsin, lysc, etc.)
     #                  False = enzyme cuts N-terminally (aspn)
+    # metamorpheus names verified empirically against the actual smithchemwisc/metamorpheus:latest
+    # image (its shipped ProteolyticDigestion/proteases.tsv, not mzLib's newer embedded resource
+    # naming scheme, which this build predates). Its built-in "trypsin" has no proline-exclusion
+    # rule at all (PSI-MS name is literally "Trypsin/P") -- METAMORPHEUS_CUSTOM_PROTEASES below adds
+    # the missing restricted variant so results are comparable to the other tools' "trypsin".
     "trypsin":      {"diann": "K*,R*,!*P", "alphadia": "trypsin_not_p", "sage_cleave_at": "KR", "sage_restrict": "P",
-                     "sage_c_terminal": True, "maxquant": "Trypsin", "metamorpheus": "trypsin"},
+                     "sage_c_terminal": True, "maxquant": "Trypsin", "metamorpheus": "trypsin (don't cleave before proline)"},
     "trypsin/p":    {"diann": "K*,R*",  "alphadia": "trypsin/p", "sage_cleave_at": "KR", "sage_restrict": None,
-                     "sage_c_terminal": True, "maxquant": "Trypsin/P", "metamorpheus": "trypsin (no proline rule)"},
+                     "sage_c_terminal": True, "maxquant": "Trypsin/P", "metamorpheus": "trypsin"},
     "lysc":         {"diann": "K*",    "alphadia": "lys-c",    "sage_cleave_at": "K",  "sage_restrict": None,
-                     "sage_c_terminal": True, "maxquant": "LysC", "metamorpheus": "LysC"},
+                     "sage_c_terminal": True, "maxquant": "LysC", "metamorpheus": "Lys-C (cleave before proline)"},
     "gluc":         {"diann": "E*",    "alphadia": "glu-c",    "sage_cleave_at": "E", "sage_restrict": None,
                      "sage_c_terminal": True, "maxquant": "GluC", "metamorpheus": "Glu-C"},
     "chymotrypsin": {"diann": "F*,Y*,W*,M*,L*,!*P", "alphadia": "chymotrypsin", "sage_cleave_at": "FWYLM", "sage_restrict": "P",
-                     "sage_c_terminal": True, "maxquant": "Chymotrypsin+", "metamorpheus": "chymotrypsin"},
+                     "sage_c_terminal": True, "maxquant": "Chymotrypsin+", "metamorpheus": "chymotrypsin (don't cleave before proline)"},
     "aspn":         {"diann": "*D",    "alphadia": "asp-n",    "sage_cleave_at": "D",  "sage_restrict": None,
                      "sage_c_terminal": False, "maxquant": "AspN", "metamorpheus": "Asp-N"},
     "argc":         {"diann": "R*",    "alphadia": "arg-c",    "sage_cleave_at": "R",  "sage_restrict": None,
@@ -193,6 +212,32 @@ class BaseRunner(ABC):
         """
         return self.acquisition in self.SUPPORTED_ACQUISITIONS
 
+    def requires_mzml(self) -> bool:
+        """Override to return True when this tool/version cannot read the
+        dataset's native format and needs mzML instead (e.g. Sage always;
+        DIA-NN < 2.0 for Thermo .raw). mzML is not a separate dataset entry:
+        get_input_files() then looks for it in the "<dataset>_mzml" sibling
+        directory next to the dataset's configured path.
+        """
+        return False
+
+    def _mzml_search_dirs(self) -> list[Path]:
+        """Candidate directories to search for mzML when requires_mzml() is True
+        and the dataset isn't already configured as mzML.
+
+        Convention: if the dataset path is /path/DATASET, prefer a sibling
+        /path/DATASET_mzml directory (populated by setup.nf from a downloaded
+        dataset's mzml/ subfolder, or placed there by hand).
+        """
+        dataset_path = Path(self.dataset_cfg["path"])
+        redirected = dataset_path.parent / f"{dataset_path.name}_mzml"
+        if redirected == dataset_path:
+            return [dataset_path]
+        return [redirected, dataset_path]
+
+    def _find_mzml_files(self, dataset_dir: Path) -> list[Path]:
+        return sorted(dataset_dir.glob("*.mzML")) or sorted(dataset_dir.glob("*.mzml"))
+
     def preflight_check(self) -> list[str]:
         """Return list of error strings; empty list means all checks passed.
         Called only on jobs that passed is_compatible().
@@ -214,15 +259,37 @@ class BaseRunner(ABC):
             )
         if not self.get_input_files():
             fmt = self.dataset_cfg.get("format", "?")
-            errors.append(
-                f"No {fmt!r} files found in {dataset_path}. "
-                "Verify that MS data files are present and that 'format:' matches "
-                "the actual file type (raw / mzml / d / wiff / mgf)."
-            )
+            if self.requires_mzml() and fmt != "mzml":
+                candidates = ", ".join(str(p) for p in self._mzml_search_dirs())
+                errors.append(
+                    f"{self.tool_name} requires mzML input; dataset format is {fmt!r} and "
+                    f"no mzML files found in candidate folder(s): {candidates}. "
+                    "Convert RAW/.d files to mzML first (e.g. with ThermoRawFileParser or msconvert)."
+                )
+            else:
+                errors.append(
+                    f"No {fmt!r} files found in {dataset_path}. "
+                    "Verify that MS data files are present and that 'format:' matches "
+                    "the actual file type (raw / mzml / d / wiff / mgf)."
+                )
         return errors
 
     def get_input_files(self) -> list[Path]:
-        """Return list of MS data file paths based on dataset format."""
+        """Return list of MS data file paths based on dataset format.
+
+        When requires_mzml() is True and the dataset isn't already mzML, redirect
+        to the "<dataset>_mzml" sibling directory instead (see _mzml_search_dirs).
+        """
+        if self.requires_mzml() and self.dataset_cfg.get("format") != "mzml":
+            for d in self._mzml_search_dirs():
+                if d.exists():
+                    mzmls = self._find_mzml_files(d)
+                    if mzmls:
+                        return mzmls
+            # Tool cannot use the dataset's native format at all — do not fall
+            # through to it below; preflight_check() reports this clearly.
+            return []
+
         dataset_path = Path(self.dataset_cfg["path"])
         fmt = self.dataset_cfg["format"]
         if fmt == "raw":
@@ -272,7 +339,13 @@ class BaseRunner(ABC):
         return image
 
     def _docker_host_dirs(self) -> list[str]:
-        """Host directories referenced by this job (dataset, fasta(s), output)."""
+        """Host directories referenced by this job (dataset, fasta(s), output).
+
+        Includes each input file's own parent dir, not just the configured
+        dataset path — get_input_files() may redirect to a "<dataset>_mzml"
+        sibling directory (see requires_mzml()), which otherwise would never
+        get bind-mounted and the tool would fail to open its input files.
+        """
         dirs = {
             str(Path(self.dataset_cfg["path"]).resolve()),
             str(Path(self.dataset_cfg["fasta"]).resolve().parent),
@@ -280,6 +353,8 @@ class BaseRunner(ABC):
         }
         if self.dataset_cfg.get("fasta_decoy"):
             dirs.add(str(Path(self.dataset_cfg["fasta_decoy"]).resolve().parent))
+        for f in self.get_input_files():
+            dirs.add(str(f.resolve().parent))
         return sorted(dirs)
 
     def docker_run_prefix(

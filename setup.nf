@@ -361,18 +361,14 @@ def downloadDatasets = {
             acquisition: meta.acquisition, format: meta.format, instrument: meta.instrument,
         ]
 
-        // mzml/ subfolder → move to a sibling "<name>_mzml" dir, matching the
-        // sibling-directory convention runners/diann.py already looks for.
+        // mzml/ subfolder → move to a sibling "<name>_mzml" dir. This is not a
+        // separate dataset entry: runners fall back to it automatically (see
+        // BaseRunner.requires_mzml/_mzml_search_dirs) whenever a tool can't
+        // read the dataset's native format and needs mzML instead.
         def mzmlSub = new File(destDir, 'mzml')
         if (mzmlSub.isDirectory() && mzmlSub.list()) {
             def mzmlSibling = new File(dataDir, "${name}_mzml")
             if (!mzmlSibling.exists()) mzmlSub.renameTo(mzmlSibling)
-            if (mzmlSibling.isDirectory()) {
-                resolvedDatasets["${name}_mzml"] = [
-                    path: mzmlSibling.absolutePath, fasta: fasta?.absolutePath, fasta_decoy: fastaDecoy?.absolutePath,
-                    acquisition: meta.acquisition, format: 'mzml', instrument: meta.instrument,
-                ]
-            }
         }
     }
 
@@ -751,7 +747,7 @@ workflow SETUP {
     if (results.sage) {
         sb << "  sage:\n    versions:\n      - id: \"latest\"\n        image: ${results.sage.image}\n"
         sb << "        sage_bin: ${results.sage.sage_bin}\n        enabled: true\n\n"
-        sb << datasetsFor('sage', "    datasets: []   # requires mzML input\n\n")
+        sb << datasetsFor('sage', "    datasets: []   # requires mzML input (auto-detected from a <name>_mzml sibling folder)\n\n")
         sb << "    extra:\n      write_pin: true\n      parquet: false\n\n"
     } else if (existingToolBlocks.sage) {
         emitPreserved('sage')

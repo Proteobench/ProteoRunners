@@ -88,36 +88,10 @@ class DIANNRunner(BaseRunner):
         except Exception:
             return None
 
-    def _requires_mzml_for_raw(self) -> bool:
+    def requires_mzml(self) -> bool:
         """DIA-NN < 2 cannot process Thermo .raw directly on Linux; use mzML instead."""
         major = self._major_version()
         return major is not None and major < 2
-
-    def _mzml_search_dirs(self) -> list[Path]:
-        """Return candidate directories to search for mzML when dataset is configured as RAW.
-
-        Convention: if dataset path is /path/DATASET, prefer /path/DATASET_mzml.
-        """
-        dataset_path = Path(self.dataset_cfg["path"])
-        redirected = dataset_path.parent / f"{dataset_path.name}_mzml"
-        # Prefer redirected folder first, then fall back to the original dataset folder.
-        if redirected == dataset_path:
-            return [dataset_path]
-        return [redirected, dataset_path]
-
-    def _find_mzml_files(self, dataset_dir: Path) -> list[Path]:
-        return sorted(dataset_dir.glob("*.mzML")) or sorted(dataset_dir.glob("*.mzml"))
-
-    def get_input_files(self) -> list[Path]:
-        # DIA-NN 1.x cannot handle Thermo .raw. If the dataset is configured as
-        # raw, redirect to an *_mzml sibling folder when available.
-        if self.dataset_cfg.get("format") == "raw" and self._requires_mzml_for_raw():
-            for d in self._mzml_search_dirs():
-                if d.exists():
-                    mzmls = self._find_mzml_files(d)
-                    if mzmls:
-                        return mzmls
-        return super().get_input_files()
 
     @property
     def tool_name(self) -> str:
@@ -131,28 +105,7 @@ class DIANNRunner(BaseRunner):
         return True
 
     def preflight_check(self) -> list[str]:
-        errors: list[str] = []
-
-        # Dataset + fasta checks (customised to support RAW→mzML redirection)
-        dataset_path = Path(self.dataset_cfg["path"])
-        if not dataset_path.exists():
-            errors.append(f"Dataset path not found: {dataset_path}")
-
-        fasta = Path(self.dataset_cfg["fasta"])
-        if not fasta.exists():
-            errors.append(f"FASTA not found: {fasta}")
-
-        input_files = self.get_input_files()
-        if not input_files:
-            if self.dataset_cfg.get("format") == "raw" and self._requires_mzml_for_raw():
-                candidates = ", ".join(str(p) for p in self._mzml_search_dirs())
-                errors.append(
-                    "DIA-NN < 2.0 cannot run on Thermo .raw inputs; "
-                    f"no mzML files found in candidate folder(s): {candidates}."
-                )
-            else:
-                errors.append(f"No input MS files found in {dataset_path}")
-
+        errors = super().preflight_check()
         errors += self.docker_preflight()
         if errors:
             return errors

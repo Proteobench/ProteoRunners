@@ -10,6 +10,7 @@ params.tool            = null     // restrict to one tool (e.g. --tool diann)
 params.dataset         = null     // restrict to one dataset
 params.no_preflight    = false    // skip preflight checks
 params.max_parallel_jobs = 6      // default; nextflow.config overrides from config.global.max_parallel_jobs
+params.unfiltered_outputs = false // keep full raw tool outputs; default filters down to ProteoBench upload files
 
 // ─── Processes ───────────────────────────────────────────────────────────────
 
@@ -37,6 +38,26 @@ process RUN_JOB {
         --dataset  "${dataset}"       \
         ${noPreflightFlag}            \
         > "${tool}_v${version}_${dataset}.json"
+    """
+}
+
+process FILTER_OUTPUTS {
+    tag "${result_json.baseName}"
+
+    // Deletes files from the job's output_dir (an absolute host path recorded
+    // inside result_json, outside Nextflow's own staging), so this runs after
+    // every job regardless of caching.
+    input:
+    path result_json
+
+    output:
+    path result_json.name, emit: result_json
+
+    script:
+    def unfilteredFlag = params.unfiltered_outputs ? "--unfiltered" : ""
+    """
+    python3 "${projectDir}/nextflow/filter_outputs.py" "${result_json}" ${unfilteredFlag} > "${result_json.name}.out"
+    mv "${result_json.name}.out" "${result_json.name}"
     """
 }
 
@@ -135,6 +156,7 @@ workflow {
     // ── Dispatch and collect ─────────────────────────────────────────────────
     Channel.from(jobs)
         | RUN_JOB
+        | FILTER_OUTPUTS
         | collect
         | WRITE_SUMMARY
 }

@@ -31,18 +31,19 @@ logger = logging.getLogger(__name__)
 
 
 def _emit(tool, version, dataset, *, success, skipped=False, runtime_s=0.0,
-          output_dir="", error_msg="", stderr_log=""):
+          output_dir="", error_msg="", stderr_log="", acquisition=""):
     """Write a JSON result record to stdout."""
     print(json.dumps({
-        "tool":       tool,
-        "version":    version,
-        "dataset":    dataset,
-        "success":    success,
-        "skipped":    skipped,
-        "runtime_s":  round(float(runtime_s), 1),
-        "output_dir": str(output_dir),
-        "error_msg":  error_msg,
-        "stderr_log": str(stderr_log) if stderr_log else "",
+        "tool":        tool,
+        "version":     version,
+        "dataset":     dataset,
+        "success":     success,
+        "skipped":     skipped,
+        "runtime_s":   round(float(runtime_s), 1),
+        "output_dir":  str(output_dir),
+        "error_msg":   error_msg,
+        "stderr_log":  str(stderr_log) if stderr_log else "",
+        "acquisition": acquisition,
     }))
 
 
@@ -125,6 +126,7 @@ def main():
         output_dir=result.output_dir,
         error_msg=result.error_msg,
         stderr_log=result.stderr_log,
+        acquisition=runner.acquisition,
     )
     sys.exit(0)
 

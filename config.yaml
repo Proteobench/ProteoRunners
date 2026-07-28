@@ -105,6 +105,12 @@ search_params:
 #                 `fasta` afterwards, so set this explicitly only to reuse a
 #                 decoy FASTA you already have or point at a specific one.
 #
+# mzML is not its own dataset entry. A tool that can't read the configured
+# format (e.g. Sage always; DIA-NN < 2.0 for Thermo .raw) automatically looks
+# for mzML files in a "<path>_mzml" sibling directory next to `path` — e.g.
+# HYE_Astral's mzML files live in data/HYE_Astral_mzml. Reference the dataset
+# by its normal name in a tool's `datasets:` list either way.
+#
 # The default paths below assume you let `nextflow run setup.nf` download the
 # datasets into ./data (relative to this project). When a dataset is actually
 # downloaded, setup rewrites its entry with the real, absolute paths and the
@@ -131,13 +137,6 @@ datasets:
     path: data/HYE_Astral
     acquisition: DIA
     format: raw
-    instrument: Astral
-    fasta: data/HYE_Astral/ProteoBenchFASTA_MixedSpecies_HYE.fasta
-
-  HYE_Astral_mzml:
-    path: data/HYE_Astral_mzml
-    acquisition: DIA
-    format: mzml
     instrument: Astral
     fasta: data/HYE_Astral/ProteoBenchFASTA_MixedSpecies_HYE.fasta
 
@@ -238,7 +237,8 @@ tools:
         sage_bin: /app/sage
         enabled: true
 
-    datasets: []   # requires mzML input
+    datasets: []   # DDA only; needs mzML — reference the dataset's normal name,
+                    # a "<name>_mzml" sibling folder is used automatically
 
     extra:
       write_pin: true

@@ -37,16 +37,13 @@ class SageRunner(BaseRunner):
     def _sage_bin(self) -> str:
         return self.version_cfg.get("sage_bin", "/app/sage")
 
+    def requires_mzml(self) -> bool:
+        # Sage reads mzML or MGF directly; anything else needs mzML redirection.
+        return self.dataset_cfg.get("format") != "mgf"
+
     def preflight_check(self) -> list[str]:
         errors = super().preflight_check()
         errors += self.docker_preflight()
-
-        fmt = self.dataset_cfg["format"]
-        if fmt not in ("mzml", "mgf"):
-            errors.append(
-                f"Sage requires mzML input; dataset format is '{fmt}'. "
-                "Convert RAW/.d files to mzML first (e.g. with ThermoRawFileParser or msconvert)."
-            )
         return errors
 
     def map_params(self) -> dict:
@@ -61,11 +58,14 @@ class SageRunner(BaseRunner):
                 for res in entry["sage_residues"]:
                     static_mods[res] = entry["sage_mass"]
 
-        variable_mods: list[dict] = []
+        # Sage expects variable_mods as a map of residue -> list of masses,
+        # same shape as static_mods (not a list of {mass, residues} objects).
+        variable_mods: dict[str, list[float]] = {}
         for m in sp.get("variable_mods", []):
             if m in MOD_REGISTRY:
                 entry = MOD_REGISTRY[m]
-                variable_mods.append({"mass": entry["sage_mass"], "residues": entry["sage_residues"]})
+                for res in entry["sage_residues"]:
+                    variable_mods.setdefault(res, []).append(entry["sage_mass"])
 
         fragment_mz = sp.get("fragment_mz_range", [200.0, 2000.0])
 

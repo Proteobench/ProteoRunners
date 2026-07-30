@@ -330,6 +330,8 @@ tools:
       dda_workflow:       LFQ-MBR                        # used for DDA datasets
       dia_workflow:       DIA_SpecLib_Quant               # used for DIA (non-PASEF) datasets
       dia_pasef_workflow: DIA_SpecLib_Quant_diaPASEF      # used for diaPASEF (instrument: timstof)
+      # diann_cmd_opts:   "--reanalyse"                    # extra raw CLI options passed to
+                                                             # FragPipe's internal DIA-NN step (DIA only)
 
   # ---------------------------------------------------------------------------
   # MaxQuant — supports DDA and DIA

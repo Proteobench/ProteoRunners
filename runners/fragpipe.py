@@ -12,6 +12,10 @@ Supported search_params keys:
   missed_cleavages, min_peptide_length, max_peptide_length,
   fixed_mods, variable_mods, max_mods_per_peptide,
   min_charge, max_charge, precursor_mz_range, fragment_mz_range
+
+extra['diann_cmd_opts'] (DIA only) is passed verbatim as diann.cmd-opts, the
+same raw-CLI-passthrough field the FragPipe GUI exposes for its internal
+DIA-NN step.
 """
 
 from __future__ import annotations
@@ -340,6 +344,10 @@ class FragPipeRunner(BaseRunner):
                 f"--sequential --psm {p['fdr_psm']} --pep {p['fdr_peptide']} --prot {p['fdr_protein']} --picked"
             ),
         }
+        if self.acquisition == DIA:
+            # Raw CLI options appended verbatim to FragPipe's internal DIA-NN call
+            # (diaTracer/DIA_SpecLib_Quant workflows only — DDA workflows never run DIA-NN).
+            overrides["diann.cmd-opts"] = (self.extra or {}).get("diann_cmd_opts", "")
 
         # Apply overrides; append new keys not in template at the end
         props.update(overrides)

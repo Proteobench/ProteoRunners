@@ -365,22 +365,25 @@ class FragPipeRunner(BaseRunner):
             "workflow.ram": str(self._ram_gb_per_job()),
         }
         if self.acquisition == DIA:
+            # NB: match_between_runs is deliberately NOT propagated to DIA-NN here.
+            # FragPipe's library-free DIA already shares information across runs by
+            # design — MSFragger-DIA builds one experimental spectral library from
+            # all runs and DIA-NN does targeted extraction against it in every run.
+            # DIA-NN's own MBR (--reanalyse) is a redundant, differently-defined
+            # second pass; the FragPipe author states it should never be enabled
+            # under FragPipe (Nesvilab/FragPipe#2825), and doing so segfaults the
+            # bundled DIA-NN 1.8.2 beta 8 while writing the second-pass report.
+            # match_between_runs still applies to DDA (ionquant.mbr above) and to
+            # the standalone DIA-NN runner; it is simply a no-op for FragPipe DIA.
+            if p["mbr"]:
+                logger.info(
+                    "[fragpipe] match_between_runs ignored for DIA: FragPipe's DIA "
+                    "workflow shares runs via its own spectral library; DIA-NN MBR "
+                    "stays off (see Nesvilab/FragPipe#2825)."
+                )
             # Raw CLI options appended verbatim to FragPipe's internal DIA-NN call
             # (diaTracer/DIA_SpecLib_Quant workflows only — DDA workflows never run DIA-NN).
-            cmd_opts = (self.extra or {}).get("diann_cmd_opts", "")
-            # DIA workflows quantify via FragPipe's internal DIA-NN step, not IonQuant,
-            # so match_between_runs must also flip DIA-NN's own MBR — ionquant.mbr above
-            # is a no-op there. FragPipe < 24 workflows have no diann.mbr key at all (its
-            # DIA-NN integration only gained the checkbox in 24.0), so on those templates
-            # MBR must be requested directly via --reanalyse in diann.cmd-opts instead.
-            if p["mbr"]:
-                if "diann.mbr" in props:
-                    overrides["diann.mbr"] = "true"
-                elif "--reanalyse" not in cmd_opts:
-                    cmd_opts = f"{cmd_opts} --reanalyse".strip()
-            elif "diann.mbr" in props:
-                overrides["diann.mbr"] = "false"
-            overrides["diann.cmd-opts"] = cmd_opts
+            overrides["diann.cmd-opts"] = (self.extra or {}).get("diann_cmd_opts", "")
 
         # Apply overrides; append new keys not in template at the end
         props.update(overrides)

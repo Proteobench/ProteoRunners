@@ -39,6 +39,12 @@ global:
   # Number of CPU threads given to each individual tool run.
   threads_per_job: 32
 
+  # FragPipe only: GB of heap its internal JVMs (MSFragger, MSBooster, ...) may
+  # use. FragPipe's own auto-detect claims ~all host memory per job, which
+  # over-commits (and gets OOM-killed) once max_parallel_jobs > 1. Leave unset
+  # to auto-split total host RAM across max_parallel_jobs instead.
+  # ram_gb_per_job: 64
+
   # Set to true to re-run jobs that already completed successfully.
   # By default the pipeline writes a .done marker after each successful run
   # and skips that job in future runs (useful for resuming after interruption).

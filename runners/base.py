@@ -238,6 +238,46 @@ class BaseRunner(ABC):
     def _find_mzml_files(self, dataset_dir: Path) -> list[Path]:
         return sorted(dataset_dir.glob("*.mzML")) or sorted(dataset_dir.glob("*.mzml"))
 
+    def _no_cleave_fasta_sanity_check(self, fasta: Path) -> list[str]:
+        """'no-cleave' searches each FASTA entry as-is (see the entrapment
+        override in __init__ above), so entries longer than max_peptide_length
+        can never be matched. Pairing 'no-cleave' with a normal, full-length
+        protein FASTA silently collapses the candidate pool to near-zero
+        instead of raising an error, and the run only fails hours later
+        downstream (near-0 identifications -> spectral library step crashes on
+        a file that was never written). Catch that mismatch up front instead.
+        """
+        max_len = self.search_params.get("max_peptide_length", 30)
+        sample_size = 500
+        lengths: list[int] = []
+        seq: list[str] = []
+        with open(fasta) as fh:
+            for line in fh:
+                if line.startswith(">"):
+                    if seq:
+                        lengths.append(sum(len(s) for s in seq))
+                        seq = []
+                    if len(lengths) >= sample_size:
+                        break
+                else:
+                    seq.append(line.strip())
+            else:
+                if seq:
+                    lengths.append(sum(len(s) for s in seq))
+
+        if not lengths:
+            return []
+        too_long = sum(1 for length in lengths if length > max_len)
+        if too_long / len(lengths) > 0.5:
+            return [
+                f"enzyme is 'no-cleave' but {too_long}/{len(lengths)} sampled entries in "
+                f"{fasta} exceed max_peptide_length ({max_len}) — 'no-cleave' searches each "
+                "entry whole, so this looks like a normal full-length-protein FASTA rather "
+                "than a pre-digested peptide-level one. Point 'fasta:' at the pre-digested "
+                "FASTA instead (or set search_params.enzyme explicitly if this is intentional)."
+            ]
+        return []
+
     def preflight_check(self) -> list[str]:
         """Return list of error strings; empty list means all checks passed.
         Called only on jobs that passed is_compatible().
@@ -257,6 +297,8 @@ class BaseRunner(ABC):
                 f"FASTA file not found: {fasta}. "
                 f"Check 'fasta:' under datasets > {self.dataset_name} in config.yaml."
             )
+        elif self.search_params.get("enzyme") == "no-cleave":
+            errors += self._no_cleave_fasta_sanity_check(fasta)
         if not self.get_input_files():
             fmt = self.dataset_cfg.get("format", "?")
             if self.requires_mzml() and fmt != "mzml":

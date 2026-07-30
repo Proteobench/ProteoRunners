@@ -180,7 +180,7 @@ datasets:
     acquisition: DIA
     format: raw
     instrument: Orbitrap
-    fasta: data/Entrapment_DIA/ProteoBenchFASTA_Entrapment_Human.fasta
+    fasta: /public/local/ProteoBench/fastas/ProteoBenchFASTA_Entrapment_Human_with_contaminants_entrapment_pep.fasta
 
 
 # =============================================================================

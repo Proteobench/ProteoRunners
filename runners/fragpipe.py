@@ -21,6 +21,7 @@ DIA-NN step.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -153,6 +154,24 @@ class FragPipeRunner(BaseRunner):
         if not jars_dir.is_dir():
             return []
         return sorted(jars_dir.glob("*.jar"))
+
+    def _ram_gb_per_job(self) -> int:
+        """GB of heap FragPipe's internal JVMs (MSFragger, MSBooster, ...) may use.
+
+        'workflow.ram=0' in FragPipe's template means "auto-detect and use
+        (almost) all host memory" — fine for a single job, but with
+        max_parallel_jobs > 1 each concurrent FragPipe process makes that same
+        claim independently, so their JVMs collectively over-commit host RAM
+        and one gets SIGKILLed by the OOM killer (exit code 137). Split total
+        host memory across the configured parallelism instead, unless the user
+        pins an explicit value via global.ram_gb_per_job.
+        """
+        configured = self.global_cfg.get("ram_gb_per_job")
+        if configured:
+            return int(configured)
+        total_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024**3)
+        parallel = max(1, self.global_cfg.get("max_parallel_jobs", 1))
+        return max(4, int(total_gb * 0.85 / parallel))
 
     def _fasta(self) -> Path:
         """Return the FASTA path to use: fasta_decoy if set, otherwise a
@@ -343,11 +362,25 @@ class FragPipeRunner(BaseRunner):
             "phi-report.filter": (
                 f"--sequential --psm {p['fdr_psm']} --pep {p['fdr_peptide']} --prot {p['fdr_protein']} --picked"
             ),
+            "workflow.ram": str(self._ram_gb_per_job()),
         }
         if self.acquisition == DIA:
             # Raw CLI options appended verbatim to FragPipe's internal DIA-NN call
             # (diaTracer/DIA_SpecLib_Quant workflows only — DDA workflows never run DIA-NN).
-            overrides["diann.cmd-opts"] = (self.extra or {}).get("diann_cmd_opts", "")
+            cmd_opts = (self.extra or {}).get("diann_cmd_opts", "")
+            # DIA workflows quantify via FragPipe's internal DIA-NN step, not IonQuant,
+            # so match_between_runs must also flip DIA-NN's own MBR — ionquant.mbr above
+            # is a no-op there. FragPipe < 24 workflows have no diann.mbr key at all (its
+            # DIA-NN integration only gained the checkbox in 24.0), so on those templates
+            # MBR must be requested directly via --reanalyse in diann.cmd-opts instead.
+            if p["mbr"]:
+                if "diann.mbr" in props:
+                    overrides["diann.mbr"] = "true"
+                elif "--reanalyse" not in cmd_opts:
+                    cmd_opts = f"{cmd_opts} --reanalyse".strip()
+            elif "diann.mbr" in props:
+                overrides["diann.mbr"] = "false"
+            overrides["diann.cmd-opts"] = cmd_opts
 
         # Apply overrides; append new keys not in template at the end
         props.update(overrides)

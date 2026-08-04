@@ -215,24 +215,6 @@ tools:
         supports_dda: true
         enabled: true
 
-      - id: "2.2.0"
-        image: diann:2.2.0
-        diann_bin: /usr/diann-2.2.0/diann
-        supports_dda: true
-        enabled: true
-
-      - id: "2.3.2"
-        image: diann:2.3.2
-        diann_bin: /usr/diann-2.3.2/diann
-        supports_dda: true
-        enabled: true
-
-      - id: "2.5.1"
-        image: diann:2.5.1
-        diann_bin: /usr/diann-2.5.1/diann
-        supports_dda: true
-        enabled: true
-
     datasets:
       - CHANGE_ME
 

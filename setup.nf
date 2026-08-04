@@ -13,7 +13,7 @@
 //   nextflow run setup.nf                      # interactive, guided setup
 //   nextflow run setup.nf --non_interactive \
 //       --msfragger_path ... --ionquant_path ... --diatracer_path ... \
-//       --build_diann_v2 --diann_version 2.5.0   # scripted / CI setup
+//       --build_diann_v2 --diann_version 2.1.0,2.5.0   # scripted / CI setup
 //
 // On a first run it writes config.yaml. On a later run it only re-prompts and
 // redoes the tools whose docker setup is incomplete, preserves already-complete
@@ -33,8 +33,9 @@ params.skip_fragpipe    = false
 params.msfragger_path   = null   // path to a MSFragger .zip or extracted folder
 params.ionquant_path    = null   // path to an IonQuant .zip or extracted folder
 params.diatracer_path   = null   // path to a diaTracer .zip or extracted folder
-params.diann_version    = '2.5.0'   // DIA-NN 2.x version to build locally (see quantms-containers)
-params.build_diann_v2   = false     // non-interactive opt-in to build the DIA-NN 2.x image
+params.diann_version    = '2.5.0'   // DIA-NN 2.x version(s) to build locally, comma-separated
+                                    // (recipe names from bigbio/quantms-containers, e.g. '2.1.0,2.5.0')
+params.build_diann_v2   = false     // non-interactive opt-in to build the DIA-NN 2.x image(s)
 params.alphadia_gpu     = false
 params.skip_datasets     = false
 params.data_dir          = null   // where downloaded datasets go; default: ${projectDir}/data
@@ -134,6 +135,21 @@ def capture = { List cmd ->
 }
 
 def firstLine = { String text -> text.readLines().find { it.trim() } ?: '' }
+
+// Compare dotted version strings numerically ("1.9.2" < "2.0.2" < "2.5.1"), so
+// sorting and >= checks don't fall back to string order ("1.9.2" > "1.10.0").
+def versionParts = { String v -> v.split(/\./).collect { (it =~ /^\d+/)[0] as int } }
+def versionOrder = { String a, String b ->
+    def (pa, pb) = [versionParts(a), versionParts(b)]
+    for (int i = 0; i < Math.max(pa.size(), pb.size()); i++) {
+        def c = (i < pa.size() ? pa[i] : 0) <=> (i < pb.size() ? pb[i] : 0)
+        if (c != 0) return c
+    }
+    return 0
+}
+
+// DIA-NN gained DDA support in 2.1.0; older releases are DIA-only.
+def supportsDda = { String v -> versionOrder(v, '2.1.0') >= 0 }
 
 // True if a docker image (local or pulled) exists on this machine.
 def imagePresent = { String image ->
@@ -245,9 +261,28 @@ def parseToolBlocks = { String configText ->
 
 // Grab a tool block's `datasets:` sub-block (so a repair preserves dataset
 // assignments instead of resetting them). Returns null if not found.
-def extractDatasetsSubBlock = { String toolBlock ->
-    def m = (toolBlock =~ /(?ms)(^    datasets:.*?)(?=^    \w|\z)/)
+def extractSubBlock = { String toolBlock, String key ->
+    def m = (toolBlock =~ /(?ms)(^    ${key}:.*?)(?=^    \w|\z)/)
     return m.find() ? m.group(1).replaceAll(/\n+$/, '') + '\n\n' : null
+}
+
+def extractDatasetsSubBlock = { String toolBlock -> extractSubBlock(toolBlock, 'datasets') }
+
+// Parse a tool block's `versions:` entries back into maps, so a re-run can ADD
+// versions to the existing list rather than replacing it — otherwise adding a
+// second DIA-NN image would silently drop any `enabled: false` a user set by
+// hand. Values stay strings; they are written back out verbatim.
+def parseVersionEntries = { String toolBlock ->
+    def sub = toolBlock ? extractSubBlock(toolBlock, 'versions') : null
+    if (!sub) return []
+    def entries = []
+    sub.eachLine { line ->
+        def m = (line =~ /^\s+(-\s+)?([\w]+):\s*(.*?)\s*$/)
+        if (!m.matches() || m.group(2) == 'versions') return
+        if (m.group(1)) entries << [:]
+        if (entries) entries[-1][m.group(2)] = m.group(3).replaceAll(/^"|"$/, '')
+    }
+    return entries
 }
 
 def results = [:]   // tool name -> map of facts collected during this run, used to write the config
@@ -567,13 +602,23 @@ workflow SETUP {
 
     // ── DIA-NN (1.8.1 public image + optional 2.x built locally) ─────────
     section('DIA-NN')
-    if (!firstRun && !incompleteTools.contains('diann')) {
-        if (existingToolBlocks.diann) ok('DIA-NN already set up — skipping.')
+    // --build_diann_v2 is an explicit "I want these versions" request, so it
+    // re-opens the DIA-NN step even when the existing block is already complete
+    // (that is how a version is added to a working setup).
+    if (!firstRun && !incompleteTools.contains('diann') && !params.build_diann_v2) {
+        if (existingToolBlocks.diann) ok('DIA-NN already set up — skipping ' + dim('(pass --build_diann_v2 to add versions).'))
         else warn('DIA-NN not configured — skipping (add it via a fresh setup).')
     } else if (askYesNo('Set up DIA-NN?', true)) {
-        def versions = []
+        // Start from what is already configured; versions found below are added
+        // to this list, and existing ids are never rebuilt or reset.
+        def versions = parseVersionEntries(existingToolBlocks.diann)
+        if (versions) ok("Keeping configured version(s): " + versions*.id.join(', '))
+        def haveVersion = { String id -> versions.any { it.id == id } }
+
         def baseImage = 'biocontainers/diann:v1.8.1_cv1'
-        if (run(['docker', 'pull', baseImage]) == 0) {
+        if (haveVersion('1.8.1')) {
+            // already in the list from a previous run
+        } else if (run(['docker', 'pull', baseImage]) == 0) {
             def found = firstLine(capture(['docker', 'run', '--rm', '--entrypoint', 'find', baseImage, '/usr', '-maxdepth', '3', '-iname', 'diann', '-type', 'f']))
             versions << [id: '1.8.1', image: baseImage, diann_bin: found ?: '/usr/diann/1.8.1/diann', supports_dda: false]
             ok("DIA-NN 1.8.1 ready " + dim("(${baseImage})"))
@@ -586,39 +631,56 @@ workflow SETUP {
         // Those Dockerfiles download DIA-NN itself from the public vdemichev/DiaNN
         // releases — no registry token or account is needed.
         def wantsV2 = params.build_diann_v2 || askYesNo(
-            'Also build a DIA-NN 2.x image locally? (needed for DDA support and native Thermo .raw on Linux)', false)
+            'Also build DIA-NN 2.x image(s) locally? (needed for DDA support and native Thermo .raw on Linux)', false)
 
         if (wantsV2) {
-            def ver = params.diann_version
-            info('DIA-NN 2.x is built locally from the bigbio/quantms-containers recipe,')
-            info("which downloads DIA-NN ${ver} (Academia release) during the build.")
+            info('DIA-NN 2.x is built locally from the bigbio/quantms-containers recipes,')
+            info('which download the DIA-NN Academia release during the build.')
             info('By continuing you accept the DIA-NN license: ' + dim('https://github.com/vdemichev/DiaNN'))
-            def image = "diann:${ver}"
-            if (imagePresent(image)) {
-                versions << [id: ver, image: image, diann_bin: "/usr/diann-${ver}/diann", supports_dda: true]
-                ok("DIA-NN ${ver} already built locally " + dim("(${image})"))
-            } else if (askYesNo("Build DIA-NN ${ver} now? " + dim('(downloads a few hundred MB, takes a few minutes)'), true)) {
-                def buildDir = File.createTempDir()
-                if (run(['git', 'clone', '--depth', '1', 'https://github.com/bigbio/quantms-containers.git', buildDir.path]) == 0) {
-                    def ctx = new File(buildDir, "diann-${ver}")
-                    if (!ctx.isDirectory()) {
-                        def avail = (buildDir.listFiles() ?: []).findAll {
-                            it.isDirectory() && it.name.startsWith('diann-') && !it.name.contains('enterprise')
-                        }.collect { it.name.replace('diann-', '') }.sort()
-                        fail("No build recipe for DIA-NN ${ver}. Available: ${avail.join(', ')}.")
-                        info('Re-run with --diann_version <one of the above>.')
-                    } else if (run(['docker', 'build', '-t', image, ctx.path]) == 0) {
-                        // Path is fixed by the recipe (ln -s .../diann-linux .../diann); no find needed.
-                        versions << [id: ver, image: image, diann_bin: "/usr/diann-${ver}/diann", supports_dda: true]
-                        ok("DIA-NN ${ver} ready " + dim("(${image}, built locally)"))
-                    } else {
-                        fail("DIA-NN ${ver} build failed — see the output above.")
-                    }
-                } else {
-                    fail('Could not clone bigbio/quantms-containers (need git + network). Skipping DIA-NN 2.x.')
+
+            def wanted = params.diann_version.split(',').collect { it.trim() }.findAll { it }
+            def buildDir = File.createTempDir()
+            if (run(['git', 'clone', '--depth', '1', 'https://github.com/bigbio/quantms-containers.git', buildDir.path]) != 0) {
+                fail('Could not clone bigbio/quantms-containers (need git + network). Skipping DIA-NN 2.x.')
+            } else {
+                // Recipe folders are named diann-<version>; the enterprise variant is
+                // per-user licensed and cannot be built from a plain clone, so hide it.
+                def avail = (buildDir.listFiles() ?: []).findAll {
+                    it.isDirectory() && it.name.startsWith('diann-') && !it.name.contains('enterprise')
+                }.collect { it.name.replace('diann-', '') }.toSorted(versionOrder)
+
+                if (interactive) {
+                    info('Available recipes: ' + avail.join(', '))
+                    def a = ask('  ' + cyan('?') + " Which version(s) to build? " + dim("(comma-separated) [${wanted.join(',')}] "))
+                    if (a) wanted = a.split(',').collect { it.trim() }.findAll { it }
                 }
-                buildDir.deleteDir()
+
+                wanted.each { ver ->
+                    if (haveVersion(ver)) {
+                        ok("DIA-NN ${ver} already configured " + dim('(left as-is)'))
+                        return
+                    }
+                    if (!avail.contains(ver)) {
+                        fail("No build recipe for DIA-NN ${ver}. Available: ${avail.join(', ')}.")
+                        return
+                    }
+                    // Path is fixed by every recipe (ln -s .../diann-linux .../diann); no find needed.
+                    def entry = [id: ver, image: "diann:${ver}",
+                                 diann_bin: "/usr/diann-${ver}/diann", supports_dda: supportsDda(ver)]
+                    if (imagePresent(entry.image)) {
+                        versions << entry
+                        ok("DIA-NN ${ver} already built locally " + dim("(${entry.image})"))
+                    } else if (askYesNo("Build DIA-NN ${ver} now? " + dim('(downloads a few hundred MB, takes a few minutes)'), true)) {
+                        if (run(['docker', 'build', '-t', entry.image, new File(buildDir, "diann-${ver}").path]) == 0) {
+                            versions << entry
+                            ok("DIA-NN ${ver} ready " + dim("(${entry.image}, built locally)"))
+                        } else {
+                            fail("DIA-NN ${ver} build failed — see the output above.")
+                        }
+                    }
+                }
             }
+            buildDir.deleteDir()
         } else {
             warn('Only DIA-NN 1.8.1 will be configured.')
         }
@@ -727,10 +789,12 @@ workflow SETUP {
             sb << "        image: ${v.image}\n"
             sb << "        diann_bin: ${v.diann_bin}\n"
             sb << "        supports_dda: ${v.supports_dda}\n"
-            sb << "        enabled: true\n\n"
+            // Newly discovered versions default to enabled; ones carried over from
+            // the existing config keep whatever the user set.
+            sb << "        enabled: ${v.containsKey('enabled') ? v.enabled : true}\n\n"
         }
         sb << datasetsFor('diann', "    datasets:\n      - CHANGE_ME\n\n")
-        sb << "    extra:\n      library: \"\"\n\n"
+        sb << (extractSubBlock(existingToolBlocks.diann ?: '', 'extra') ?: "    extra:\n      library: \"\"\n\n")
     } else if (existingToolBlocks.diann) {
         emitPreserved('diann')
     }
@@ -815,4 +879,40 @@ workflow SETUP {
 // including script's own workflow{} executes in that case.
 workflow {
     SETUP()
+}
+
+// Self-check for the version helpers that decide DIA-NN recipe ordering and
+// DDA support. Run with: nextflow run setup.nf -entry SELFTEST
+workflow SELFTEST {
+    def sorted = ['2.5.0', '1.8.1', '2.0.2', '1.9.2', '2.10.0'].toSorted(versionOrder)
+    assert sorted == ['1.8.1', '1.9.2', '2.0.2', '2.5.0', '2.10.0'] : "got ${sorted}"
+    assert [!supportsDda('1.8.1'), !supportsDda('2.0.2'), supportsDda('2.1.0'), supportsDda('2.5.1')].every()
+
+    // A re-run must read back every configured version, including enabled: false,
+    // or adding a version would silently drop the others.
+    def block = '''  diann:
+    versions:
+      - id: "1.8.1"
+        image: biocontainers/diann:v1.8.1_cv1
+        diann_bin: /usr/diann/1.8.1/diann
+        supports_dda: false
+        enabled: true
+
+      - id: "2.5.0"
+        image: diann:2.5.0
+        diann_bin: /usr/diann-2.5.0/diann
+        supports_dda: true
+        enabled: false
+
+    datasets:
+      - Entrapment_DIA
+
+    extra:
+      library: ""
+'''
+    def parsed = parseVersionEntries(block)
+    assert parsed*.id == ['1.8.1', '2.5.0'] : "got ${parsed*.id}"
+    assert parsed[1].image == 'diann:2.5.0' && parsed[1].enabled == 'false' : "got ${parsed[1]}"
+    assert extractSubBlock(block, 'extra').contains('library') && extractDatasetsSubBlock(block).contains('Entrapment_DIA')
+    println 'SELFTEST ok'
 }

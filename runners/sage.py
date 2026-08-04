@@ -26,6 +26,10 @@ from .base import DDA, ENZYME_MAP, MOD_REGISTRY, BaseRunner
 
 logger = logging.getLogger(__name__)
 
+# Fallback mass tolerance (ppm) used when search_params asks for automatic
+# calibration, which Sage does not offer.
+_DEFAULT_TOL_PPM = 20
+
 
 class SageRunner(BaseRunner):
     SUPPORTED_ACQUISITIONS = (DDA,)
@@ -77,8 +81,13 @@ class SageRunner(BaseRunner):
             "missed_cleavages":   sp.get("missed_cleavages", 2),
             "min_len":            sp.get("min_peptide_length", 7),
             "max_len":            sp.get("max_peptide_length", 30),
-            "precursor_tol_ppm":  sp.get("precursor_mass_tolerance_ppm", 20),
-            "fragment_tol_ppm":   sp.get("fragment_mass_tolerance_ppm", 20),
+            # Sage has no automatic mass calibration and rejects a config without
+            # precursor_tol/fragment_tol, so tolerance 0 ("automatic") falls back
+            # to this runner's default window rather than being passed through.
+            "precursor_tol_ppm":  _DEFAULT_TOL_PPM if self.auto_tolerance("precursor")
+                                  else sp.get("precursor_mass_tolerance_ppm", _DEFAULT_TOL_PPM),
+            "fragment_tol_ppm":   _DEFAULT_TOL_PPM if self.auto_tolerance("fragment")
+                                  else sp.get("fragment_mass_tolerance_ppm", _DEFAULT_TOL_PPM),
             "precursor_charge":   [sp.get("min_charge", 2), sp.get("max_charge", 4)],
             "fragment_min_mz":    fragment_mz[0],
             "fragment_max_mz":    fragment_mz[1],

@@ -169,12 +169,17 @@ class MaxQuantRunner(BaseRunner):
             if el is not None and el.text != val:
                 el.text = val
                 dirty = True
+        # Tolerance 0 = automatic. MaxQuant always recalibrates masses in its
+        # first search and derives the main search window from that, so there is
+        # no switch to flip: leave mainSearchTol at the mqpar template's value.
+        pg_tags = [
+            ('maxMissedCleavages', str(p["missed_cleavages"])),
+            ('maxNmods', str(p["max_mods"])),
+        ]
+        if not self.auto_tolerance("precursor"):
+            pg_tags.append(('mainSearchTol', str(p["precursor_tol_ppm"])))
         for pg in root.findall('.//parameterGroup'):
-            for tag, val in (
-                ('maxMissedCleavages', str(p["missed_cleavages"])),
-                ('mainSearchTol', str(p["precursor_tol_ppm"])),
-                ('maxNmods', str(p["max_mods"])),
-            ):
+            for tag, val in pg_tags:
                 el = pg.find(tag)
                 if el is not None and el.text != val:
                     el.text = val
@@ -226,8 +231,11 @@ class MaxQuantRunner(BaseRunner):
         # --- 4. set fragment mass tolerance ---
         # msmsParamsArray contains one entry per MS2 type (FTMS, ITMS, etc.).
         # --changeParameter cannot address nested array members, so patch them here.
+        # Skipped entirely when the tolerance is 0 ("automatic"), leaving each MS2
+        # type at the per-instrument default the mqpar template already carries.
         frag_tol = str(p["fragment_tol_ppm"])
-        for msms_params_el in root.findall('.//msmsParamsArray/msmsParams'):
+        for msms_params_el in ([] if self.auto_tolerance("fragment")
+                               else root.findall('.//msmsParamsArray/msmsParams')):
             tol_el = msms_params_el.find('MatchTolerance')
             ppm_el = msms_params_el.find('MatchToleranceInPpm')
             if tol_el is not None and tol_el.text != frag_tol:

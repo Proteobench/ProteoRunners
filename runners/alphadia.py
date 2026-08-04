@@ -123,6 +123,12 @@ class AlphaDIARunner(BaseRunner):
             # target_ms1/ms2_tolerance: final search tolerances that AlphaDIA logs and
             # ProteoBench reads back (CONFIG_KEY_MAPPER). Set explicitly so calibration
             # does not override the benchmark value.
+            #
+            # 0 is passed straight through rather than dropped: AlphaDIA branches on
+            # `target_ms*_tolerance > 0` and picks TargetedMS*Optimizer above 0 or
+            # AutomaticMS*Optimizer at 0 (workflow/peptidecentric/optimization_handler.py).
+            # Omitting the key instead would fall back to its default.yaml value
+            # (5 / 10 ppm) and silently keep the targeted optimizer.
             "search": {
                 "target_ms1_tolerance": p["precursor_tol"],
                 "target_ms2_tolerance": p["fragment_tol"],

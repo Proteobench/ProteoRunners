@@ -336,12 +336,6 @@ class FragPipeRunner(BaseRunner):
         overrides: dict[str, str] = {
             "database.db-path":                         str(fasta),
             "msfragger.num_threads":                    str(threads),
-            "msfragger.precursor_mass_lower":           str(-tol),
-            "msfragger.precursor_mass_upper":           str(tol),
-            "msfragger.precursor_mass_units":           "1",
-            "msfragger.fragment_mass_tolerance":        str(p["fragment_tol_ppm"]),
-            "msfragger.fragment_mass_units":            "1",
-            "msfragger.precursor_true_tolerance":       str(tol),
             "msfragger.allowed_missed_cleavage_1":      str(p["missed_cleavages"]),
             "msfragger.allowed_missed_cleavage_2":      str(p["missed_cleavages"]),
             "msfragger.digest_min_length":              str(p["min_pep_length"]),
@@ -364,6 +358,27 @@ class FragPipeRunner(BaseRunner):
             ),
             "workflow.ram": str(self._ram_gb_per_job()),
         }
+
+        # Tolerance 0 = automatic. MSFragger's calibrate_mass=2 does mass
+        # calibration plus search-parameter optimization, which picks the
+        # tolerance itself, so leave the corresponding keys at the workflow
+        # template's values instead of pinning them.
+        if self.auto_tolerance("precursor"):
+            overrides["msfragger.calibrate_mass"] = "2"
+        else:
+            overrides.update({
+                "msfragger.precursor_mass_lower":     str(-tol),
+                "msfragger.precursor_mass_upper":     str(tol),
+                "msfragger.precursor_mass_units":     "1",
+                "msfragger.precursor_true_tolerance": str(tol),
+            })
+        if self.auto_tolerance("fragment"):
+            overrides["msfragger.calibrate_mass"] = "2"
+        else:
+            overrides.update({
+                "msfragger.fragment_mass_tolerance": str(p["fragment_tol_ppm"]),
+                "msfragger.fragment_mass_units":     "1",
+            })
         if self.acquisition == DIA:
             # NB: match_between_runs is deliberately NOT propagated to DIA-NN here.
             # FragPipe's library-free DIA already shares information across runs by

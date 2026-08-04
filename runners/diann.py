@@ -1,9 +1,10 @@
 """DIA-NN runner.
 
-Runs inside the quantms DIA-NN docker images (pulled by setup.nf): 1.8.1 from
-biocontainers/diann (public), 2.x from ghcr.io/bigbio/diann (requires a
-GitHub token with read:packages, since those images are private). The
-in-container binary path is recorded per version in 'diann_bin'.
+Runs inside the quantms DIA-NN docker images (set up by setup.nf): 1.8.1 is
+pulled from biocontainers/diann (public), while 2.x images are built locally
+from the bigbio/quantms-containers recipes, since the DIA-NN license forbids
+redistributing them. Any number of versions can be configured side by side;
+the in-container binary path is recorded per version in 'diann_bin'.
 
 Supported search_params keys (others ignored):
   fdr_psm, fdr_protein, match_between_runs, normalize,
@@ -190,8 +191,6 @@ class DIANNRunner(BaseRunner):
             "--missed-cleavages", str(p["missed_cleavages"]),
             "--min-pep-len",      str(p["min_pep_length"]),
             "--max-pep-len",      str(p["max_pep_length"]),
-            "--mass-acc",         str(p["mass_acc"]),
-            "--mass-acc-ms1",     str(p["mass_acc_ms1"]),
             "--qvalue",           str(p["fdr_psm"]),
             "--protein-qvalue",   str(p["fdr_protein"]),
             "--min-pr-charge",    str(p["min_charge"]),
@@ -202,6 +201,13 @@ class DIANNRunner(BaseRunner):
             "--max-fr-mz",        str(int(p["max_fr_mz"])),
             "--cut",              str(p["enzyme"]),
         ]
+
+        # Tolerance 0 = automatic: DIA-NN determines mass accuracy itself from the
+        # first run when the flag is absent, so leave it off rather than passing 0.
+        if not self.auto_tolerance("fragment"):
+            cmd += ["--mass-acc", str(p["mass_acc"])]
+        if not self.auto_tolerance("precursor"):
+            cmd += ["--mass-acc-ms1", str(p["mass_acc_ms1"])]
 
         cmd += self._fixed_mod_args(p["fixed_mods"])
         cmd += self._var_mod_args(p["var_mods"])

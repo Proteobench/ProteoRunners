@@ -80,6 +80,22 @@ search_params:
 
   # Precursor (MS1) and fragment (MS2) mass tolerance in parts per million.
   # 10 ppm is a safe default for Orbitrap data; Astral data can often use 5 ppm.
+  #
+  # Set either to 0 for AUTOMATIC calibration. The two are independent, so one
+  # can be fixed while the other is automatic. What 0 does per tool:
+  #   DIA-NN       --mass-acc / --mass-acc-ms1 omitted; DIA-NN determines the
+  #                mass accuracy itself from the first run
+  #   FragPipe     msfragger.calibrate_mass=2 (mass calibration + search
+  #                parameter optimization); tolerances left at workflow defaults
+  #   AlphaDIA     target_ms1/ms2_tolerance passed through as 0, which is how
+  #                AlphaDIA selects AutomaticMS1/MS2Optimizer over the targeted
+  #                one (search_initial tolerances still apply if set)
+  #   MaxQuant     mqpar values left untouched — MaxQuant recalibrates in its
+  #                first search regardless, there is no switch to flip
+  #   MetaMorpheus tolerance lines omitted from the search task, so its own
+  #                defaults apply (calibration is a separate task type)
+  #   Sage         no automatic calibration and the field is mandatory, so it
+  #                falls back to 20 ppm
   precursor_mass_tolerance_ppm: 10
   fragment_mass_tolerance_ppm: 10
 
@@ -229,17 +245,28 @@ tools:
   # DIA-NN — supports both DDA (v2.1+) and DIA
   # Docker images (quantms): https://quantmsdiann.quantms.org/containers/
   #   1.8.1 — biocontainers/diann, public, no token needed
-  #   2.x   — ghcr.io/bigbio/diann, needs a GitHub token (read:packages scope)
+  #   2.x   — built locally from the bigbio/quantms-containers recipes, since
+  #           the DIA-NN license forbids redistributing the images. Recipes
+  #           exist for 1.8.1, 1.9.2, 2.0.2, 2.1.0, 2.2.0, 2.3.2, 2.5.0, 2.5.1.
   # Set up with: nextflow run setup.nf
+  #   (or non-interactively: --build_diann_v2 --diann_version 2.1.0,2.5.0)
+  # Any number of versions can be listed here; every enabled one is run on every
+  # dataset below, which is how a cross-version comparison is done.
   # ---------------------------------------------------------------------------
   diann:
     versions:
       # supports_dda: true from version 2.1.0 onward; older versions are DIA-only
       - id: "2.5.0"
-        image: ghcr.io/bigbio/diann:2.5.0
-        diann_bin: CHANGE_ME    # in-container path, auto-detected by setup.nf
+        image: diann:2.5.0       # locally built tag, written by setup.nf
+        diann_bin: /usr/diann-2.5.0/diann
         supports_dda: true
-        enabled: false   # set to true once image is pulled
+        enabled: false   # set to true once the image is built
+
+      - id: "2.1.0"
+        image: diann:2.1.0
+        diann_bin: /usr/diann-2.1.0/diann
+        supports_dda: true
+        enabled: false
 
       - id: "1.8.1"
         image: biocontainers/diann:v1.8.1_cv1

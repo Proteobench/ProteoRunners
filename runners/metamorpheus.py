@@ -111,6 +111,19 @@ class MetaMorpheusRunner(BaseRunner):
     def _write_search_task(self, output_dir: Path, normalize: bool) -> Path:
         p = self.map_params()
 
+        # MetaMorpheus has no automatic mass calibration inside the search task
+        # (calibration is a separate task type), so tolerance 0 = "automatic"
+        # falls back to its own defaults: omit the line and MetaMorpheus fills it in.
+        tol_lines = "\n".join(
+            line for line, is_auto in (
+                (f'ProductMassTolerance = "±{p["fragment_tol_ppm"]:.4f} PPM"', self.auto_tolerance("fragment")),
+                (f'PrecursorMassTolerance = "±{p["precursor_tol_ppm"]:.4f} PPM"', self.auto_tolerance("precursor")),
+            ) if not is_auto
+        )
+        # QuantifyPpmTol drives the quantification window, not the search; keep the
+        # runner default there rather than dropping it.
+        quantify_ppm_tol = 20.0 if self.auto_tolerance("precursor") else float(p["precursor_tol_ppm"])
+
         toml_content = f"""\
 TaskType = "Search"
 
@@ -119,7 +132,7 @@ DoParsimony = true
 NoOneHitWonders = false
 ModPeptidesAreDifferent = false
 Normalize = {str(normalize).lower()}
-QuantifyPpmTol = {float(p['precursor_tol_ppm'])}
+QuantifyPpmTol = {quantify_ppm_tol}
 MatchBetweenRuns = {str(p['mbr']).lower()}
 DoLabelFreeQuantification = true
 WriteMzId = true
@@ -143,8 +156,7 @@ ListOfModsVariable = "{p['var_mods']}"
 DoPrecursorDeconvolution = true
 UseProvidedPrecursorInfo = true
 TotalPartitions = 1
-ProductMassTolerance = "±{p['fragment_tol_ppm']:.4f} PPM"
-PrecursorMassTolerance = "±{p['precursor_tol_ppm']:.4f} PPM"
+{tol_lines}
 QValueThreshold = {p['fdr']}
 PepQValueThreshold = 1.0
 ReportAllAmbiguity = true

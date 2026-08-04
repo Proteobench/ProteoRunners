@@ -212,6 +212,28 @@ class BaseRunner(ABC):
         """
         return self.acquisition in self.SUPPORTED_ACQUISITIONS
 
+    def auto_tolerance(self, which: str) -> bool:
+        """True when search_params sets this mass tolerance to 0, which means
+        "let the tool work it out" rather than a literal 0 ppm window.
+
+        0 is never a usable tolerance, so it is an unambiguous opt-in marker.
+        What each runner does with it depends on what the tool actually offers:
+
+          * a real automatic mass calibration → switch it on and stop pinning
+            the tolerance (DIA-NN omits --mass-acc/--mass-acc-ms1; MSFragger
+            gets calibrate_mass=2; AlphaDIA drops its target_ms*_tolerance)
+          * no such switch → fall back to the tool's own default tolerance
+            (MaxQuant, MetaMorpheus, Sage)
+
+        'which' is "precursor" or "fragment". The two are independent: only the
+        one set to 0 is made automatic.
+        """
+        val = self.search_params.get(f"{which}_mass_tolerance_ppm")
+        try:
+            return val is not None and float(val) == 0
+        except (TypeError, ValueError):
+            return False
+
     def requires_mzml(self) -> bool:
         """Override to return True when this tool/version cannot read the
         dataset's native format and needs mzML instead (e.g. Sage always;

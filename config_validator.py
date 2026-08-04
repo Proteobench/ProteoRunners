@@ -24,7 +24,9 @@ VALID_ACQUISITIONS = {"DDA", "DIA"}
 
 # Fields that must be 0 < value <= 1
 _FDR_FIELDS = ("fdr_psm", "fdr_peptide", "fdr_protein")
-# Fields that must be positive numbers
+# Fields that must be positive numbers, or exactly 0 meaning "automatic"
+# (see BaseRunner.auto_tolerance: each tool then enables its own mass
+# calibration, or falls back to its own default tolerance).
 _TOL_FIELDS = ("precursor_mass_tolerance_ppm", "fragment_mass_tolerance_ppm")
 
 
@@ -160,9 +162,10 @@ def _validate_search_params(sp: dict, config_path: Path, errors: list[str]) -> N
         val = sp.get(field)
         if val is not None:
             try:
-                if float(val) <= 0:
+                if float(val) < 0:
                     errors.append(
-                        f"search_params.{field} must be a positive number; got {val!r}."
+                        f"search_params.{field} must be a positive number, "
+                        f"or 0 for automatic calibration; got {val!r}."
                     )
             except (TypeError, ValueError):
                 errors.append(f"search_params.{field} must be a number; got {val!r}.")

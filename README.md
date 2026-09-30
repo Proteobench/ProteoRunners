@@ -2,7 +2,7 @@
 
 This pipeline runs multiple proteomics search engines on ProteoBench benchmark datasets and collects output files for downstream submission to [ProteoBench](https://proteobench.cubimed.rub.de/). It supports DIA-NN, AlphaDIA, Sage, FragPipe, MaxQuant, and MetaMorpheus across DDA and DIA acquisition modes.
 
-Everything runs through Nextflow (`proteobench.nf`), on a local machine or on a cluster (SLURM, …): it checks its own docker setup and runs the setup wizard itself when needed. Pull a tagged release directly from GitHub — no `git clone` needed — and `nextflow run ProteoBench/ProteoRunners -r v1.0.4` is the only command most users ever have to type. Add `--setup` to that command to add or re-enable a tool later.
+Everything runs through Nextflow (`proteobench.nf`), on a local machine or on a cluster (SLURM, …): it checks its own docker setup and runs the setup wizard itself when needed. Pull a tagged release directly from GitHub — no `git clone` needed — and `nextflow run ProteoBench/ProteoRunners -r v1.0.5` is the only command most users ever have to type. Add `--setup` to that command to add or re-enable a tool later.
 
 ---
 
@@ -35,7 +35,7 @@ Make a folder for your benchmark, go into it, and run the latest release directl
 
 ```bash
 mkdir my_benchmark && cd my_benchmark
-nextflow run ProteoBench/ProteoRunners -r v1.0.4
+nextflow run ProteoBench/ProteoRunners -r v1.0.5
 ```
 
 Everything you own is kept in the folder you run the command from:

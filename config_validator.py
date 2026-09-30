@@ -45,8 +45,8 @@ def docker_setup_errors(cfg: dict) -> list[str]:
     itself available, and does every *enabled* tool version have its image
     pulled and its tool-specific extras (FragPipe JARs, in-container paths)
     in place? Deliberately excludes dataset/search_params checks — this is
-    used by proteobench.nf to decide whether setup.nf needs to run again,
-    and a missing dataset path is not something setup can fix.
+    used by proteobench.nf to decide whether setup.nf needs to run again;
+    missing datasets are checked separately by missing_downloadable_datasets().
     """
     errors: list[str] = []
     if not shutil.which("docker"):
@@ -87,6 +87,48 @@ def incomplete_docker_tools(cfg: dict) -> list[str]:
         if tool_errors:
             incomplete.append(tool_name)
     return incomplete
+
+
+CATALOG_PATH = Path(__file__).parent / "nextflow" / "datasets_catalog.yaml"
+
+
+def missing_downloadable_datasets(cfg: dict, config_path: Path) -> list[str]:
+    """Names of datasets that an enabled tool uses but that are not on disk
+    (no entry, CHANGE_ME, or the path is missing or empty), restricted to the
+    ones setup.nf can download from datasets_catalog.yaml. Used by
+    proteobench.nf to decide whether setup needs to run again, and by setup.nf
+    to decide which datasets to offer for (re)download. Missing datasets that
+    are not in the catalog are left to validate_config() to report.
+    """
+    import yaml
+
+    catalog = yaml.safe_load(CATALOG_PATH.read_text()) if CATALOG_PATH.exists() else {}
+    datasets = cfg.get("datasets") or {}
+
+    used: list[str] = []
+    for tool_cfg in (cfg.get("tools") or {}).values():
+        if not isinstance(tool_cfg, dict):
+            continue
+        if not any(isinstance(v, dict) and v.get("enabled", False) for v in tool_cfg.get("versions", [])):
+            continue
+        for name in tool_cfg.get("datasets") or []:
+            if name and "CHANGE_ME" not in str(name) and name not in used:
+                used.append(name)
+
+    missing: list[str] = []
+    for name in used:
+        if name not in (catalog or {}):
+            continue
+        path_str = str((datasets.get(name) or {}).get("path") or "")
+        if not path_str or "CHANGE_ME" in path_str:
+            missing.append(name)
+            continue
+        path = Path(path_str)
+        if not path.is_absolute():
+            path = config_path.parent / path
+        if not path.is_dir() or not any(path.iterdir()):
+            missing.append(name)
+    return missing
 
 
 def validate_config(cfg: dict, config_path: Path) -> list[str]:
@@ -361,6 +403,11 @@ if __name__ == "__main__":
         "--list-incomplete-tools", action="store_true",
         help="Print (one per line) the tools whose docker setup is incomplete; used by setup.nf.",
     )
+    parser.add_argument(
+        "--list-missing-datasets", action="store_true",
+        help="Print (one per line) the datasets used by enabled tools that are missing on disk "
+             "but downloadable from the catalog; used by proteobench.nf and setup.nf.",
+    )
     args = parser.parse_args()
 
     if not args.config.exists():
@@ -373,6 +420,11 @@ if __name__ == "__main__":
     if args.list_incomplete_tools:
         for tool in incomplete_docker_tools(loaded_cfg):
             print(tool)
+        sys.exit(0)
+
+    if args.list_missing_datasets:
+        for name in missing_downloadable_datasets(loaded_cfg, args.config.resolve()):
+            print(name)
         sys.exit(0)
 
     found_errors = docker_setup_errors(loaded_cfg) if args.check_docker_setup else validate_config(loaded_cfg, args.config)

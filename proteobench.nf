@@ -79,6 +79,19 @@ process WRITE_SUMMARY {
     """
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// Run config_validator.py with one flag; returns [exit code, non-empty output lines].
+def runValidator(configFile, flag) {
+    def p = ["python3", "${projectDir}/config_validator.py",
+             "--config", configFile.absolutePath, flag].execute()
+    def out = new StringBuilder()
+    def err = new StringBuilder()
+    p.consumeProcessOutput(out, err)
+    p.waitFor()
+    return [p.exitValue(), out.toString().readLines().collect { l -> l.trim() }.findAll { l -> l }]
+}
+
 // ─── Workflow ─────────────────────────────────────────────────────────────────
 
 workflow {
@@ -86,21 +99,22 @@ workflow {
     def configFile = new File(params.config as String)
 
     // ── Setup gate: run the docker setup wizard on a first run (no config.yaml
-    // yet), or whenever an *enabled* tool's docker setup looks incomplete
-    // (missing image, missing FragPipe JARs, ...). Otherwise skip it entirely.
+    // yet), whenever an *enabled* tool's docker setup looks incomplete
+    // (missing image, missing FragPipe JARs, ...), or when a dataset used by an
+    // enabled tool is missing but downloadable from the catalog. Otherwise skip it.
     def setupOk = false
     if (configFile.exists()) {
-        def checkProc = ["python3", "${projectDir}/config_validator.py",
-                          "--config", configFile.absolutePath, "--check-docker-setup"].execute()
-        def checkOut = new StringBuilder()
-        def checkErr = new StringBuilder()
-        checkProc.consumeProcessOutput(checkOut, checkErr)
-        checkProc.waitFor()
-        setupOk = (checkProc.exitValue() == 0)
-        if (!setupOk) {
+        def dockerCheck = runValidator(configFile, "--check-docker-setup")
+        def dockerExit = dockerCheck[0]
+        def missingDatasets = runValidator(configFile, "--list-missing-datasets")[1]
+        setupOk = (dockerExit == 0 && !missingDatasets)
+        if (dockerExit != 0) {
             log.warn "Docker setup looks incomplete for one or more enabled tools:"
-            checkOut.toString().readLines().each { log.warn "  - ${it}" }
+            dockerCheck[1].each { msg -> log.warn "  - ${msg}" }
             log.warn "These versions are checked because they have 'enabled: true' in ${configFile}. Set 'enabled: false' for a version you do not want, and it is no longer checked."
+        }
+        if (missingDatasets) {
+            log.warn "Datasets used by enabled tools are missing on disk: ${missingDatasets.join(', ')}"
         }
     }
 
@@ -138,7 +152,7 @@ workflow {
     def enumOut = enumStdout.toString()
 
     def jobs = enumOut.readLines()
-                      .findAll  { it.trim() }
+                      .findAll  { line -> line.trim() }
                       .collect  { line ->
                           def j = new groovy.json.JsonSlurper().parseText(line)
                           tuple(j.tool as String, j.version as String, j.dataset as String)
@@ -156,7 +170,7 @@ workflow {
     }
 
     // ── Dispatch and collect ─────────────────────────────────────────────────
-    Channel.from(jobs)
+    channel.fromList(jobs)
         | RUN_JOB
         | FILTER_OUTPUTS
         | collect

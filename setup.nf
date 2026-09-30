@@ -6,14 +6,16 @@
 //
 // Normally you never run this file directly — proteobench.nf includes it as
 // the SETUP workflow and calls it automatically the first time config.yaml
-// doesn't exist yet, or whenever an enabled tool's docker setup looks
-// incomplete (see the completeness check at the top of proteobench.nf).
+// doesn't exist yet, whenever an enabled tool's docker setup looks
+// incomplete, or when a dataset used by an enabled tool is missing (see the
+// setup gate at the top of proteobench.nf).
 //
 // Direct/manual use (e.g. to force a full re-check outside of a real run):
 //   nextflow run setup.nf                      # interactive, guided setup
 //   nextflow run setup.nf --non_interactive \
 //       --msfragger_path ... --ionquant_path ... --diatracer_path ... \
 //       --build_diann_v2 --diann_version 2.1.0,2.5.0   # scripted / CI setup
+//   nextflow run setup.nf --selftest           # check the helper functions
 //
 // On a first run it writes config.yaml. On a later run it only re-prompts and
 // redoes the tools whose docker setup is incomplete, preserves already-complete
@@ -21,6 +23,11 @@
 // in place (keeping a .bak copy).
 //
 // Docker must already be installed and running — see README.md.
+//
+// Written in Nextflow's strict syntax (no top-level statements, imports, or
+// for/while loops), which also parses under the legacy parser
+// (NXF_SYNTAX_PARSER=v1). Shared state is therefore passed explicitly instead
+// of living in script-level variables.
 
 nextflow.enable.dsl = 2
 
@@ -164,6 +171,18 @@ def capture(cmd) {
 }
 
 def firstLine(text) { return text.readLines().find { l -> l.trim() } ?: '' }
+
+// Run config_validator.py with one of its --list-* flags and return the
+// non-empty output lines.
+def validatorList(configFile, flag) {
+    def p = ['python3', "${projectDir}/config_validator.py".toString(),
+             '--config', configFile.absolutePath, flag].execute()
+    def o = new StringBuilder()
+    def e = new StringBuilder()
+    p.consumeProcessOutput(o, e)
+    p.waitFor()
+    return o.toString().readLines().collect { l -> l.trim() }.findAll { l -> l }
+}
 
 // Compare dotted version strings numerically ("1.9.2" < "2.0.2" < "2.5.1"), so
 // sorting and >= checks don't fall back to string order ("1.9.2" > "1.10.0").
@@ -379,12 +398,14 @@ def parseVersionEntries(toolBlock) {
 }
 
 // Offers to download+unzip catalog datasets relevant to the tools just set up
-// (per `results`, scoped by acquisition via toolAcquisitions()). Returns a map:
+// (per `results`, scoped by acquisition via toolAcquisitions()), plus the
+// `required` ones: datasets an enabled tool already uses whose configured path
+// is missing (see config_validator.py --list-missing-datasets). Returns a map:
 // dataset name -> [path, fasta, fasta_decoy, acquisition, format, instrument].
-def downloadDatasets(results) {
+def downloadDatasets(results, required) {
     def resolvedDatasets = [:]
-    if (params.skip_datasets || results.isEmpty()) {
-        warn('Skipping dataset download (--skip_datasets given, or no tools set up).')
+    if (params.skip_datasets || (results.isEmpty() && !required)) {
+        warn('Skipping dataset download (--skip_datasets given, or no tools set up and no datasets missing).')
         return resolvedDatasets
     }
 
@@ -392,7 +413,7 @@ def downloadDatasets(results) {
     def catalogFile = new File("${projectDir}/nextflow/datasets_catalog.yaml")
     def catalog = catalogFile.exists() ? loadCatalog(catalogFile) : [:]
     def enabledAcqs = results.keySet().collect { tool -> acquisitions[tool] ?: ['DDA', 'DIA'] }.flatten().toSet()
-    def relevant = catalog.findAll { _name, meta -> meta.acquisition in enabledAcqs }
+    def relevant = catalog.findAll { name, meta -> meta.acquisition in enabledAcqs || name in required }
     if (!relevant) {
         warn('No catalog datasets are relevant to the tools you just set up — skipping.')
         return resolvedDatasets
@@ -411,11 +432,12 @@ def downloadDatasets(results) {
         } else if (!isInteractive()) {
             warn('Skipping dataset download in non-interactive mode (pass --download_datasets all|name1,name2 to opt in).')
         } else {
-            info('Datasets relevant to the tools you just set up:')
+            info('Datasets you can download:')
             def names = missing.keySet().toList()
             names.eachWithIndex { name, i ->
                 def meta = missing[name]
-                println '      ' + bold("${i + 1}.") + " ${name}  " + dim("(${meta.acquisition}, ${meta.format}, ${meta.instrument})")
+                def note = name in required ? yellow('  used by an enabled tool, but missing') : ''
+                println '      ' + bold("${i + 1}.") + " ${name}  " + dim("(${meta.acquisition}, ${meta.format}, ${meta.instrument})") + note
             }
             def answer = ask('  ' + cyan('?') + ' Download which of these? ' + dim('[all/none/1,2,...]') + ' (default: all): ')?.toLowerCase()
             if (!answer || answer == 'all') {
@@ -530,18 +552,15 @@ workflow SETUP {
     def firstRun           = !configFile.exists()
     def existingToolBlocks = firstRun ? [:] : parseToolBlocks(configFile.text)
     def incompleteTools    = [] as Set
+    def missingDatasets    = []
     if (!firstRun) {
-        def p = ['python3', "${projectDir}/config_validator.py".toString(),
-                 '--config', configFile.absolutePath, '--list-incomplete-tools'].execute()
-        def o = new StringBuilder()
-        def e = new StringBuilder()
-        p.consumeProcessOutput(o, e)
-        p.waitFor()
-        incompleteTools = o.toString().readLines().collect { l -> l.trim() }.findAll { l -> l } as Set
+        incompleteTools = validatorList(configFile, '--list-incomplete-tools') as Set
+        missingDatasets = validatorList(configFile, '--list-missing-datasets')
         def complete = (existingToolBlocks.keySet() - incompleteTools)
         section('What needs doing')
         if (incompleteTools) info("Re-doing (incomplete): " + incompleteTools.sort().join(', '))
         if (complete)        ok("Keeping (already complete): " + complete.sort().join(', '))
+        if (missingDatasets) info("Missing datasets used by enabled tools: " + missingDatasets.join(', '))
     }
 
     // ── MaxQuant ──────────────────────────────────────────────────────────
@@ -753,7 +772,7 @@ workflow SETUP {
 
             def baseImage = 'biocontainers/diann:v1.8.1_cv1'
             if (haveVersion.call('1.8.1')) {
-                // already in the list from a previous run
+                // already in the list from a previous run (repaired above if enabled and missing)
             } else if (runCmd(['docker', 'pull', baseImage]) == 0) {
                 def found = firstLine(capture(['docker', 'run', '--rm', '--entrypoint', 'find', baseImage, '/usr', '-maxdepth', '3', '-iname', 'diann', '-type', 'f']))
                 versions << [id: '1.8.1', image: baseImage, diann_bin: found ?: '/usr/diann/1.8.1/diann', supports_dda: false]
@@ -778,7 +797,7 @@ workflow SETUP {
                 def buildDir = File.createTempDir()
                 if (runCmd(['git', 'clone', '--depth', '1', 'https://github.com/bigbio/quantms-containers.git', buildDir.path]) != 0) {
                     fail('Could not clone bigbio/quantms-containers (need git + network). Skipping DIA-NN 2.x.')
-                if (toBuild) warn("Not built: ${toBuild.collect { v -> v.id }.join(', ')}. They stay enabled, so setup will ask again on the next run.")
+                    if (toBuild) warn("Not built: ${toBuild.collect { v -> v.id }.join(', ')}. They stay enabled, so setup will ask again on the next run.")
                 } else {
                     // Recipe folders are named diann-<version>; the enterprise variant is
                     // per-user licensed and cannot be built from a plain clone, so hide it.
@@ -843,7 +862,7 @@ workflow SETUP {
 
     // ── Datasets (optional automatic download) ────────────────────────────
     section('Datasets')
-    def resolvedDatasets = downloadDatasets(results)
+    def resolvedDatasets = downloadDatasets(results, missingDatasets)
 
     // ── Write config.yaml ─────────────────────────────────────────────────
     // Base the global/search_params/datasets sections on the existing config
@@ -860,14 +879,17 @@ workflow SETUP {
 
     // Rebuild the datasets: block. Keep every existing entry verbatim; only
     // replace an entry with a freshly-resolved one when the existing entry is
-    // still a CHANGE_ME placeholder (template first run), and append any newly
-    // downloaded datasets not already present. This never clobbers real paths.
-    // Match only the top-level key at the start of a line: the comments above it
-    // mention `datasets:` too, and cutting there drops the real key.
+    // still a CHANGE_ME placeholder (template first run) or its path was found
+    // missing (missingDatasets), and append any newly downloaded datasets not
+    // already present. Entries with a working path are never clobbered.
+    // Match the key at the start of a line: the header comments above it also
+    // contain the text "`datasets:`".
     def datasetsKey = java.util.regex.Pattern.compile(/(?m)^datasets:/).matcher(staticSection)
-    def hasDatasetsKey = datasetsKey.find()
-    def beforeDatasets = hasDatasetsKey ? staticSection.substring(0, datasetsKey.start()) : staticSection + '\n'
-    def afterDatasetsKeyword = hasDatasetsKey ? staticSection.substring(datasetsKey.end()) : ''
+    if (!datasetsKey.find()) {
+        error "No top-level 'datasets:' key found in ${configFile}. Restore it (see config.template.yaml), then re-run setup."
+    }
+    def beforeDatasets = staticSection.substring(0, datasetsKey.start())
+    def afterDatasetsKeyword = staticSection.substring(datasetsKey.end())
 
     def entryPattern = java.util.regex.Pattern.compile(/(?m)^  (\S+):\n((?:    .*\n)+)/)
     def existingEntries = [:]
@@ -879,14 +901,15 @@ workflow SETUP {
     // Every rendered entry above already ends with its own blank-line separator,
     // so drop the one leading blank line here to avoid a doubled-up gap.
     def datasetsTrailer = afterDatasetsKeyword.substring(lastEnd).replaceFirst(/^\n/, '')
+    def replaceable = { name -> existingEntries[name].contains('CHANGE_ME') || name in missingDatasets }
 
     def datasetsOut = new StringBuilder('datasets:\n\n')
     existingEntries.each { name, block ->
-        def overrideWithResolved = resolvedDatasets.containsKey(name) && block.contains('CHANGE_ME')
+        def overrideWithResolved = resolvedDatasets.containsKey(name) && replaceable.call(name)
         if (!overrideWithResolved) datasetsOut << block << '\n'
     }
     resolvedDatasets.each { name, d ->
-        def keptVerbatim = existingEntries.containsKey(name) && !existingEntries[name].contains('CHANGE_ME')
+        def keptVerbatim = existingEntries.containsKey(name) && !replaceable.call(name)
         if (keptVerbatim) return
         datasetsOut << "  ${name}:\n"
         datasetsOut << "    path: ${d.path}\n"

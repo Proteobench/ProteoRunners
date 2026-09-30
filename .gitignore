@@ -14,4 +14,7 @@ work/
 .env
 tools/fragpipe_jars/
 config.docker.yaml
+data/config.yaml
+config.yaml.bak
 data/
+config.yaml

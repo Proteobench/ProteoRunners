@@ -1,0 +1,21 @@
+  diann:
+    versions:
+      - id: "1.8.1"
+        image: biocontainers/diann:v1.8.1_cv1
+        diann_bin: /usr/diann/1.8.1/diann
+        supports_dda: false
+        extra_args: "--keep-me"
+        enabled: true
+
+      - id: "2.5.0"
+        image: diann:2.5.0
+        diann_bin: /usr/diann-2.5.0/diann
+        supports_dda: true
+        enabled: false   # built later
+
+    datasets:
+      - Entrapment_DIA
+      - HYE_Astral
+
+    extra:
+      library: ""

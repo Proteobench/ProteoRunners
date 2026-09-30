@@ -1,0 +1,28 @@
+global:
+  output_dir: results
+  max_parallel_jobs: 1
+  threads_per_job: 1
+
+search_params:
+  enzyme: trypsin/p
+
+datasets:
+
+  TINY_DIA:
+    path: CHANGE_ME
+    acquisition: DIA
+    format: raw
+    instrument: Astral
+    fasta: CHANGE_ME
+
+tools:
+
+  alphadia:
+    versions:
+      - id: "latest"
+        image: hello-world:latest
+        gpu: false
+        enabled: true
+
+    datasets:
+      - TINY_DIA

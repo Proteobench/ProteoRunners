@@ -8,21 +8,16 @@
 # nothing to compile or install natively. Docker itself must be installed
 # and running (see README.md).
 #
-# 1. Run: nextflow run setup.nf
-#    This pulls the docker image for each tool you choose, walks you through
-#    the license prompts FragPipe and DIA-NN 2.x need, and writes config.yaml
-#    containing only the tools it finished setting up. Re-running it later only
-#    redoes the tools whose docker setup is incomplete and updates config.yaml
-#    in place (keeping a config.yaml.bak copy), leaving everything else as-is.
-# 2. In config.yaml, replace every remaining CHANGE_ME with a path on your
-#    system (datasets, output_dir).
-# 3. Run: python run_proteobench.py --dry-run   to verify before executing.
+# 1. Run: nextflow run ProteoBench/ProteoRunners   (or proteobench.nf in a clone)
+#    On a first run this starts the setup wizard: it pulls the docker image for
+#    each tool you choose, walks you through the license steps FragPipe and
+#    DIA-NN 2.x need, downloads datasets and writes config.yaml. Later runs
+#    only fix what is missing; add --setup to add or re-enable a tool.
+# 2. Edit config.yaml by hand whenever you like; setup keeps your changes.
 #
-# All paths can be absolute (/full/path) or relative to the directory where
-# you run the script. Absolute paths are recommended to avoid surprises.
+# Relative paths are relative to the folder that holds config.yaml. Absolute
+# paths are recommended to avoid surprises.
 #
-# Run python run_proteobench.py --list-tools    to see which tools are enabled.
-# Run python run_proteobench.py --list-datasets to see configured datasets.
 # =============================================================================
 
 global:
@@ -155,8 +150,8 @@ search_params:
 # HYE_Astral's mzML files live in data/HYE_Astral_mzml. Reference the dataset
 # by its normal name in a tool's `datasets:` list either way.
 #
-# The default paths below assume you let `nextflow run setup.nf` download the
-# datasets into ./data (relative to this project). When a dataset is actually
+# The default paths below assume you let setup download the datasets into
+# data/ next to config.yaml. When a dataset is actually
 # downloaded, setup rewrites its entry with the real, absolute paths and the
 # FASTA it detected inside the archive, so these defaults only apply to
 # datasets you place by hand. See nextflow/datasets_catalog.yaml.
@@ -224,7 +219,7 @@ datasets:
     acquisition: DIA
     format: raw
     instrument: Orbitrap
-    fasta: data/Entrapment_DIA/ProteoBenchFASTA_Entrapment_Human.fasta
+    fasta: data/Entrapment_DIA/ProteoBenchFASTA_Entrapment_Human_with_contaminants_entrapment_pep.fasta
 
 
 # =============================================================================
@@ -236,7 +231,7 @@ datasets:
 #   extra    — tool-specific options not covered by search_params
 #
 # 'image:' and any *_bin/*_dir path inside it are filled in automatically by
-# `nextflow run setup.nf`. Only enabled versions are run. Disabling a version
+# the setup wizard. Only enabled versions are run. Disabling a version
 # is safe — it keeps the configuration for future use without executing the tool.
 #
 # ESCAPE HATCH — extra_args
@@ -266,7 +261,7 @@ tools:
   #   2.x   — built locally from the bigbio/quantms-containers recipes, since
   #           the DIA-NN license forbids redistributing the images. Recipes
   #           exist for 1.8.1, 1.9.2, 2.0.2, 2.1.0, 2.2.0, 2.3.2, 2.5.0, 2.5.1.
-  # Set up with: nextflow run setup.nf
+  # Set up with: the pipeline's setup (runs automatically, or add --setup)
   #   (or non-interactively: --build_diann_v2 --diann_version 2.1.0,2.5.0)
   # Any number of versions can be listed here; every enabled one is run on every
   # dataset below, which is how a cross-version comparison is done.
@@ -310,7 +305,7 @@ tools:
   # AlphaDIA — DIA only
   # Docker image: mannlabs/alphadia:latest
   # https://github.com/MannLabs/alphadia/blob/main/docs/installation.md
-  # Set up with: nextflow run setup.nf
+  # Set up with: the pipeline's setup (runs automatically, or add --setup)
   # ---------------------------------------------------------------------------
   alphadia:
     versions:
@@ -335,7 +330,7 @@ tools:
   # the "Datasets" section above). For Thermo raw datasets, populate that
   # sibling folder yourself with ThermoRawFileParser/msconvert if it wasn't
   # downloaded already.
-  # Set up with: nextflow run setup.nf
+  # Set up with: the pipeline's setup (runs automatically, or add --setup)
   # ---------------------------------------------------------------------------
   sage:
     versions:
@@ -356,7 +351,7 @@ tools:
   # FragPipe — supports DDA and DIA
   # Docker image: fcyucn/fragpipe:latest (does NOT include the separately
   # academic-licensed MSFragger/IonQuant/diaTracer JARs)
-  # Set up with: nextflow run setup.nf   — it will interactively ask whether
+  # Set up with: the pipeline's setup (--setup) — it will interactively ask whether
   # you already have those JARs (as a downloaded zip/folder) or want to skip
   # FragPipe for now.
   # ---------------------------------------------------------------------------
@@ -389,7 +384,7 @@ tools:
   # Docker images: quay.io/medbioinf/maxquant:2.6.3.0 and :2.8.1.0 (Max Planck
   # academic license). Pin explicit version tags, not :latest — :latest drifts
   # between MaxQuant versions and would break the recorded maxquant_dll path.
-  # Set up with: nextflow run setup.nf
+  # Set up with: the pipeline's setup (runs automatically, or add --setup)
   # ---------------------------------------------------------------------------
   maxquant:
     versions:
@@ -412,7 +407,7 @@ tools:
   # ---------------------------------------------------------------------------
   # MetaMorpheus — DDA only
   # Docker image: smithchemwisc/metamorpheus:latest
-  # Set up with: nextflow run setup.nf
+  # Set up with: the pipeline's setup (runs automatically, or add --setup)
   # ---------------------------------------------------------------------------
   metamorpheus:
     versions:

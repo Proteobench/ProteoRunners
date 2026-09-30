@@ -5,6 +5,7 @@ __pycache__/
 *.parquet
 *.speclib
 *.txt
+!requirements.txt
 *run_summary
 ProteoBench/
 configs/
@@ -18,3 +19,7 @@ data/config.yaml
 config.yaml.bak
 data/
 config.yaml
+!requirements-dev.txt
+.venv/
+.nf-test/
+.nf-test.log

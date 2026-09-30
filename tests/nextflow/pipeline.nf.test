@@ -1,0 +1,120 @@
+// End-to-end tests of the setup gate in proteobench.nf, run non-interactively.
+// They need Docker; images are either fake tags (never pulled) or the tiny
+// hello-world image, except the first-run test, which pulls the Sage image.
+// Run: nf-test test tests/nextflow/pipeline.nf.test
+
+nextflow_pipeline {
+    name "proteobench.nf setup gate"
+    script "proteobench.nf"
+
+    test("first run: sets up the chosen tool, downloads a dataset, asks nothing") {
+        when {
+            params {
+                def dir = Fixtures.prepare(baseDir, "${outputDir}/run", null)
+                config            = "${dir}/config.yaml"
+                datasets_catalog  = "${dir}/catalog.yaml"
+                non_interactive   = true
+                setup_tools       = 'sage'
+                download_datasets = 'TINY_DDA'
+                tool              = 'none'
+            }
+        }
+        then {
+            assert workflow.success
+            def dir = new File("${outputDir}/run")
+            def cfg = Fixtures.yaml(new File(dir, 'config.yaml'))
+            assert cfg.tools.keySet() == ['sage'] as Set
+            assert cfg.tools.sage.datasets == ['TINY_DDA']
+            assert cfg.global.output_dir == new File(dir, 'results').path
+            def ds = new File(cfg.datasets.TINY_DDA.path)
+            assert ds == new File(dir, 'data/TINY_DDA')
+            assert new File(ds, 'run_A.raw').isFile() && new File(cfg.datasets.TINY_DDA.fasta).isFile()
+            assert new File(dir, 'data/TINY_DDA_mzml/run_A.mzML').isFile()
+            assert !new File(ds, '.proteorunners_incomplete').exists()
+            assert !new File(dir, 'config.yaml.bak').exists()
+        }
+    }
+
+    test("missing image, non-interactive: stops with a clear message and never disables the tool") {
+        when {
+            params {
+                def dir = Fixtures.prepare(baseDir, "${outputDir}/run", 'config_missing_image.yaml')
+                config           = "${dir}/config.yaml"
+                datasets_catalog = "${dir}/catalog.yaml"
+                non_interactive  = true
+            }
+        }
+        then {
+            assert workflow.failed
+            assert workflow.stdout.any { l -> l.contains('docker image proteorunners-test/missing:0 is not on this machine') }
+            assert workflow.stdout.any { l -> l.contains('It stays enabled') }
+            assert workflow.stdout.any { l -> l.contains('is not ready to run yet') }
+            def dir = new File("${outputDir}/run")
+            assert new File(dir, 'config.yaml').text == new File(baseDir, 'tests/fixtures/config_missing_image.yaml').text
+        }
+    }
+
+    test("dataset used by an enabled tool is missing: the gate downloads it and fills in the entry") {
+        when {
+            params {
+                def dir = Fixtures.prepare(baseDir, "${outputDir}/run", 'config_needs_dataset.yaml')
+                config            = "${dir}/config.yaml"
+                datasets_catalog  = "${dir}/catalog.yaml"
+                non_interactive   = true
+                download_datasets = 'all'
+                tool              = 'none'
+            }
+        }
+        then {
+            assert workflow.success
+            def dir = new File("${outputDir}/run")
+            def cfg = Fixtures.yaml(new File(dir, 'config.yaml'))
+            assert cfg.datasets.TINY_DIA.path == new File(dir, 'data/TINY_DIA').path
+            assert cfg.datasets.TINY_DIA.fasta == new File(dir, 'data/TINY_DIA/HYE.fasta').path
+            assert cfg.tools.alphadia.datasets == ['TINY_DIA']
+            assert new File(dir, 'config.yaml.bak').text == new File(baseDir, 'tests/fixtures/config_needs_dataset.yaml').text
+        }
+    }
+
+    test("broken downloads: nothing counts as downloaded and config.yaml is not touched") {
+        when {
+            params {
+                def dir = Fixtures.prepare(baseDir, "${outputDir}/run", 'config_broken_downloads.yaml')
+                config            = "${dir}/config.yaml"
+                datasets_catalog  = "${dir}/catalog.yaml"
+                non_interactive   = true
+                download_datasets = 'all'
+            }
+        }
+        then {
+            assert workflow.failed
+            def dir = new File("${outputDir}/run")
+            assert workflow.stdout.any { l -> l.contains('MISSING_DDA: download failed') }
+            assert workflow.stdout.any { l -> l.contains('CORRUPT_DDA: the archive contained no .raw files') }
+            assert !new File(dir, 'data/MISSING_DDA').exists()
+            assert new File(dir, 'data/CORRUPT_DDA/.proteorunners_incomplete').exists()
+            assert new File(dir, 'config.yaml').text == new File(baseDir, 'tests/fixtures/config_broken_downloads.yaml').text
+            assert !new File(dir, 'config.yaml.bak').exists()
+        }
+    }
+
+    test("everything present: setup does not run and config.yaml is not touched") {
+        when {
+            params {
+                def dir = Fixtures.prepare(baseDir, "${outputDir}/run", 'config_complete.yaml')
+                Fixtures.extractedDataset(dir.path, 'TINY_DDA')
+                config           = "${dir}/config.yaml"
+                datasets_catalog = "${dir}/catalog.yaml"
+                non_interactive  = true
+                tool             = 'none'
+            }
+        }
+        then {
+            assert workflow.success
+            assert !workflow.stdout.any { l -> l.contains('Docker setup') }
+            def dir = new File("${outputDir}/run")
+            assert new File(dir, 'config.yaml').text == new File(baseDir, 'tests/fixtures/config_complete.yaml').text
+            assert !new File(dir, 'config.yaml.bak').exists()
+        }
+    }
+}

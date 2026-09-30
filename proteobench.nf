@@ -1,11 +1,12 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl = 2
 
-include { SETUP } from './setup.nf'
+include { SETUP; checkPrerequisites; setupStatus; configErrors; askYesNo; resultsDirFor } from './setup.nf'
 
 // ─── Parameters ──────────────────────────────────────────────────────────────
 // All parameters mirror run_proteobench.py CLI flags.
-params.config          = "${projectDir}/config.yaml"
+params.config          = params.config ?: "${launchDir}/config.yaml"
+params.setup           = false    // run the setup wizard first and offer every tool that is not set up
 params.tool            = null     // restrict to one tool (e.g. --tool diann)
 params.dataset         = null     // restrict to one dataset
 params.no_preflight    = false    // skip preflight checks
@@ -32,7 +33,7 @@ process RUN_JOB {
     def noPreflightFlag = params.no_preflight ? "--no-preflight" : ""
     """
     python3 "${projectDir}/nextflow/run_single_job.py" \
-        --config   "${params.config}" \
+        --config   "${new File(params.config as String).absolutePath}" \
         --tool     "${tool}"          \
         --version  "${version}"       \
         --dataset  "${dataset}"       \
@@ -62,11 +63,13 @@ process FILTER_OUTPUTS {
 }
 
 process WRITE_SUMMARY {
-    // publish_dir is set by nextflow.config from config.global.output_dir.
-    publishDir params.publish_dir ?: "${projectDir}/results", mode: 'copy', overwrite: true
+    // Published to --publish_dir, else global.output_dir of config.yaml, read
+    // after setup ran (a first-run setup only sets output_dir then).
+    publishDir path: { publish_to }, mode: 'copy', overwrite: true
 
     input:
     path result_jsons   // collected list of per-job JSON files
+    val publish_to
 
     output:
     path "run_summary_nf.tsv", emit: summary
@@ -79,53 +82,58 @@ process WRITE_SUMMARY {
     """
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-// Run config_validator.py with one flag; returns [exit code, non-empty output lines].
-def runValidator(configFile, flag) {
-    def p = ["python3", "${projectDir}/config_validator.py",
-             "--config", configFile.absolutePath, flag].execute()
-    def out = new StringBuilder()
-    def err = new StringBuilder()
-    p.consumeProcessOutput(out, err)
-    p.waitFor()
-    return [p.exitValue(), out.toString().readLines().collect { l -> l.trim() }.findAll { l -> l }]
-}
-
 // ─── Workflow ─────────────────────────────────────────────────────────────────
 
 workflow {
 
-    def configFile = new File(params.config as String)
+    def configFile = new File(params.config as String).absoluteFile
 
-    // ── Setup gate: run the docker setup wizard on a first run (no config.yaml
-    // yet), whenever an *enabled* tool's docker setup looks incomplete
-    // (missing image, missing FragPipe JARs, ...), or when a dataset used by an
-    // enabled tool is missing but downloadable from the catalog. Otherwise skip it.
-    def setupOk = false
-    if (configFile.exists()) {
-        def dockerCheck = runValidator(configFile, "--check-docker-setup")
-        def dockerExit = dockerCheck[0]
-        def missingDatasets = runValidator(configFile, "--list-missing-datasets")[1]
-        setupOk = (dockerExit == 0 && !missingDatasets)
-        if (dockerExit != 0) {
-            log.warn "Docker setup looks incomplete for one or more enabled tools:"
-            dockerCheck[1].each { msg -> log.warn "  - ${msg}" }
+    // ── Setup gate ───────────────────────────────────────────────────────────
+    // Setup runs on a first run (no config.yaml yet), with --setup, when an
+    // *enabled* tool's docker setup is incomplete (missing image, missing
+    // FragPipe JARs, ...), or when a dataset used by an enabled tool is not on
+    // disk but downloadable from the catalog. Otherwise it is skipped.
+    checkPrerequisites()
+    def firstRun = !configFile.exists()
+    def runSetup = firstRun || params.setup
+    if (!runSetup) {
+        def status = setupStatus(configFile)
+        def incomplete = status.tools.findAll { _n, t -> t.status == 'incomplete' }
+        incomplete.each { _n, t -> t.problems.each { pr -> log.warn pr.message } }
+        if (incomplete) {
             log.warn "These versions are checked because they have 'enabled: true' in ${configFile}. Set 'enabled: false' for a version you do not want, and it is no longer checked."
         }
-        if (missingDatasets) {
-            log.warn "Datasets used by enabled tools are missing on disk: ${missingDatasets.join(', ')}"
+        if (status.missing_datasets) {
+            log.warn "Datasets used by enabled tools are not on disk yet: ${status.missing_datasets.join(', ')}"
+        }
+        if (status.tools.fragpipe?.status == 'disabled' && status.tools.fragpipe.fragpipe_jars_missing) {
+            log.info "FragPipe is disabled because its licensed JARs are missing. To add them, run the pipeline again with --setup."
+        }
+        runSetup = incomplete || status.missing_datasets
+    }
+
+    if (runSetup) {
+        log.info firstRun ? "No ${configFile} yet — running first-time setup ..." :
+                 params.setup ? "Running setup (--setup) ..." : "Running setup for the missing pieces above ..."
+        SETUP(!firstRun && !params.setup)
+        if (!configFile.exists()) {
+            error "Setup did not produce ${configFile}. See the messages above, then run the same command again."
         }
     }
 
-    if (!setupOk) {
-        log.info configFile.exists() ?
-            "Re-running setup for the missing pieces above ..." :
-            "No ${configFile} yet — running first-time docker setup ..."
-        SETUP()
-        if (!configFile.exists()) {
-            error "Setup did not produce ${configFile}. See the messages above, then re-run: nextflow run proteobench.nf"
+    // ── Is config.yaml ready to run? ─────────────────────────────────────────
+    // One clear list up front, instead of every job failing on its own.
+    def problems = configErrors(configFile)
+    if (problems) {
+        problems.eachWithIndex { m, i -> log.error "${i + 1}. ${m}" }
+        if (!params.no_preflight) {
+            error "${configFile} is not ready to run yet (${problems.size()} problem(s) above). Fix them (or run the pipeline with --setup), then run the same command again."
         }
+        log.warn "Continuing anyway because --no_preflight was given."
+    }
+    if ((firstRun || params.setup) && !askYesNo('Setup is done. Start the benchmark runs now?', true)) {
+        log.info "Not starting now. Start the runs later with the same command, without --setup."
+        return
     }
 
     def configPath = configFile.absolutePath
@@ -159,8 +167,8 @@ workflow {
                       }
 
     if (!jobs) {
-        log.warn "No enabled jobs found. Check config.yaml enabled flags and filters."
-        log.warn "Run: python3 run_proteobench.py --list-tools   to see what is enabled."
+        log.warn "No jobs to run. A job needs a tool version with 'enabled: true' and a dataset name in that tool's datasets: list in ${configFile}" +
+                 (params.tool || params.dataset ? ", matching --tool/--dataset." : ".")
         return
     }
 
@@ -170,9 +178,8 @@ workflow {
     }
 
     // ── Dispatch and collect ─────────────────────────────────────────────────
-    channel.fromList(jobs)
-        | RUN_JOB
-        | FILTER_OUTPUTS
-        | collect
-        | WRITE_SUMMARY
+    def publishTo = params.publish_dir ?: resultsDirFor(configFile)
+    RUN_JOB(channel.fromList(jobs))
+    FILTER_OUTPUTS(RUN_JOB.out.result_json)
+    WRITE_SUMMARY(FILTER_OUTPUTS.out.result_json.collect(), publishTo)
 }

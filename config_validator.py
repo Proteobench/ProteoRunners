@@ -40,95 +40,97 @@ def _suggest_path(path_str: str) -> str:
     return ""
 
 
-def docker_setup_errors(cfg: dict) -> list[str]:
-    """Check only the docker/tool-installation side of config.yaml: is docker
-    itself available, and does every *enabled* tool version have its image
-    pulled and its tool-specific extras (FragPipe JARs, in-container paths)
-    in place? Deliberately excludes dataset/search_params checks — this is
-    used by proteobench.nf to decide whether setup.nf needs to run again;
-    missing datasets are checked separately by missing_downloadable_datasets().
-    """
-    errors: list[str] = []
-    if not shutil.which("docker"):
-        errors.append("docker is not installed or not on PATH.")
-        return errors
-
-    for tool_name, tool_cfg in (cfg.get("tools") or {}).items():
-        if not isinstance(tool_cfg, dict):
-            continue
-        for i, ver in enumerate(tool_cfg.get("versions", [])):
-            if not isinstance(ver, dict) or not ver.get("enabled", False):
-                continue
-            ver_prefix = f"tools > {tool_name} > id: {ver.get('id', f'index {i}')}"
-            _validate_tool_docker(tool_name, ver, ver_prefix, errors)
-    return errors
-
-
-def incomplete_docker_tools(cfg: dict) -> list[str]:
-    """Names of tools whose docker setup is incomplete (at least one enabled
-    version has a missing image / FragPipe JAR / in-container path). Used by
-    setup.nf to redo and re-prompt only the tools that actually need it,
-    leaving already-complete tools untouched. If docker is unavailable, every
-    configured tool is reported (nothing can be verified).
-    """
-    if not shutil.which("docker"):
-        return list((cfg.get("tools") or {}).keys())
-
-    incomplete: list[str] = []
-    for tool_name, tool_cfg in (cfg.get("tools") or {}).items():
-        if not isinstance(tool_cfg, dict):
-            continue
-        tool_errors: list[str] = []
-        for i, ver in enumerate(tool_cfg.get("versions", [])):
-            if not isinstance(ver, dict) or not ver.get("enabled", False):
-                continue
-            ver_prefix = f"tools > {tool_name} > id: {ver.get('id', f'index {i}')}"
-            _validate_tool_docker(tool_name, ver, ver_prefix, tool_errors)
-        if tool_errors:
-            incomplete.append(tool_name)
-    return incomplete
-
-
 CATALOG_PATH = Path(__file__).parent / "nextflow" / "datasets_catalog.yaml"
 
+# setup.nf writes this file into a dataset folder while it downloads and
+# extracts it, and removes it once that finished. A folder that still has it is
+# a partial download and counts as missing.
+INCOMPLETE_MARKER = ".proteorunners_incomplete"
 
-def missing_downloadable_datasets(cfg: dict, config_path: Path) -> list[str]:
-    """Names of datasets that an enabled tool uses but that are not on disk
-    (no entry, CHANGE_ME, or the path is missing or empty), restricted to the
-    ones setup.nf can download from datasets_catalog.yaml. Used by
-    proteobench.nf to decide whether setup needs to run again, and by setup.nf
-    to decide which datasets to offer for (re)download. Missing datasets that
-    are not in the catalog are left to validate_config() to report.
-    """
-    import yaml
 
-    catalog = yaml.safe_load(CATALOG_PATH.read_text()) if CATALOG_PATH.exists() else {}
-    datasets = cfg.get("datasets") or {}
+def _enabled(ver) -> bool:
+    return isinstance(ver, dict) and ver.get("enabled", False) is True
 
+
+def used_datasets(cfg: dict) -> list[str]:
+    """Dataset names listed by tools that have at least one enabled version."""
     used: list[str] = []
     for tool_cfg in (cfg.get("tools") or {}).values():
-        if not isinstance(tool_cfg, dict):
-            continue
-        if not any(isinstance(v, dict) and v.get("enabled", False) for v in tool_cfg.get("versions", [])):
+        if not isinstance(tool_cfg, dict) or not any(_enabled(v) for v in tool_cfg.get("versions") or []):
             continue
         for name in tool_cfg.get("datasets") or []:
             if name and "CHANGE_ME" not in str(name) and name not in used:
                 used.append(name)
+    return used
 
+
+def _resolve(value: str, config_path: Path) -> Path:
+    """Relative dataset paths are relative to the directory holding config.yaml."""
+    path = Path(str(value)).expanduser()
+    return path if path.is_absolute() else config_path.resolve().parent / path
+
+
+def _dataset_on_disk(path: Path) -> bool:
+    return path.is_dir() and any(path.iterdir()) and not (path / INCOMPLETE_MARKER).exists()
+
+
+def missing_downloadable_datasets(cfg: dict, config_path: Path, catalog_path: Path = CATALOG_PATH) -> list[str]:
+    """Names of datasets that an enabled tool uses but that are not on disk
+    (no entry, CHANGE_ME, a missing or empty path, or a partial download),
+    restricted to the ones setup.nf can download from the catalog. Missing
+    datasets that are not in the catalog are left to validate_config().
+    """
+    import yaml
+
+    catalog = (yaml.safe_load(catalog_path.read_text()) if catalog_path.exists() else None) or {}
+    datasets = cfg.get("datasets") or {}
     missing: list[str] = []
-    for name in used:
-        if name not in (catalog or {}):
+    for name in used_datasets(cfg):
+        if name not in catalog:
             continue
         path_str = str((datasets.get(name) or {}).get("path") or "")
-        if not path_str or "CHANGE_ME" in path_str:
-            missing.append(name)
-            continue
-        path = Path(path_str)
-        if not path.is_absolute():
-            path = config_path.parent / path
-        if not path.is_dir() or not any(path.iterdir()):
+        if not path_str or "CHANGE_ME" in path_str or not _dataset_on_disk(_resolve(path_str, config_path)):
             missing.append(name)
     return missing
+
+
+def setup_status(cfg: dict, config_path: Path, catalog_path: Path = CATALOG_PATH) -> dict:
+    """Everything setup.nf and the proteobench.nf setup gate need to decide what
+    to (re)do, as one JSON-serialisable dict:
+
+      tools: {name: {status, problems, fragpipe_jars_missing}}
+        status   "complete"   every enabled version has its image and extras
+                 "incomplete" at least one enabled version has a problem
+                 "disabled"   the tool is configured but no version is enabled
+        problems [{id, image, reason, message}] for the enabled versions;
+                 reason is "image" (not pulled), "jars" (FragPipe licensed
+                 JARs missing) or "config" (image or in-container path unset)
+      missing_datasets: see missing_downloadable_datasets()
+    """
+    tools: dict[str, dict] = {}
+    for tool_name, tool_cfg in (cfg.get("tools") or {}).items():
+        if not isinstance(tool_cfg, dict):
+            continue
+        versions = [v for v in tool_cfg.get("versions") or [] if isinstance(v, dict)]
+        problems = []
+        for i, ver in enumerate(versions):
+            if not _enabled(ver):
+                continue
+            ver_id = str(ver.get("id", f"index {i}"))
+            for reason, message in _version_problems(tool_name, ver, f"tools > {tool_name} > id: {ver_id}"):
+                problems.append({"id": ver_id, "image": ver.get("image", ""), "reason": reason, "message": message})
+        if not any(_enabled(v) for v in versions):
+            status = "disabled"
+        else:
+            status = "incomplete" if problems else "complete"
+        jars_missing = False
+        if tool_name == "fragpipe":
+            jars_missing = any(_missing_fragpipe_jars(v.get("jars_dir", "")) for v in versions) if versions else True
+        tools[tool_name] = {"status": status, "problems": problems, "fragpipe_jars_missing": jars_missing}
+    return {
+        "tools": tools,
+        "missing_datasets": missing_downloadable_datasets(cfg, config_path, catalog_path),
+    }
 
 
 def validate_config(cfg: dict, config_path: Path) -> list[str]:
@@ -147,7 +149,7 @@ def validate_config(cfg: dict, config_path: Path) -> list[str]:
 
     _validate_global(cfg["global"], config_path, errors)
     _validate_search_params(cfg["search_params"], config_path, errors)
-    _validate_datasets(cfg["datasets"], config_path, errors)
+    _validate_datasets(cfg["datasets"], config_path, errors, set(used_datasets(cfg)))
     _validate_tools(cfg["tools"], cfg["datasets"], config_path, errors)
 
     return errors
@@ -224,34 +226,39 @@ def _validate_search_params(sp: dict, config_path: Path, errors: list[str]) -> N
                     )
 
 
-def _validate_datasets(datasets: dict, config_path: Path, errors: list[str]) -> None:
+def _validate_datasets(datasets: dict, config_path: Path, errors: list[str], used: set[str]) -> None:
+    """Paths are only checked for datasets that an enabled tool uses, so unused
+    entries (e.g. the template defaults) never block a run."""
     for ds_name, ds in datasets.items():
         if not isinstance(ds, dict):
             errors.append(f"datasets.{ds_name}: expected a mapping, got {type(ds).__name__}.")
             continue
         prefix = f"datasets > {ds_name}"
 
-        # Required keys
-        for key in ("path", "fasta"):
-            val = ds.get(key, "")
-            if not val:
-                errors.append(
-                    f"{prefix}: '{key}' is missing or empty. "
-                    f"Set it in config.yaml under datasets > {ds_name}."
-                )
-            elif "CHANGE_ME" in str(val):
-                errors.append(
-                    f"{prefix}: '{key}' still contains 'CHANGE_ME': {val!r}. "
-                    "Replace it with a real path."
-                )
-            elif Path(val).is_absolute() and not Path(val).exists():
-                errors.append(
-                    f"{prefix}: '{key}' path does not exist: {val}. "
-                    "Is the data directory mounted? Check 'path:' in config.yaml."
-                    if key == "path" else
-                    f"{prefix}: FASTA file does not exist: {val}. "
-                    f"Check 'fasta:' under datasets > {ds_name} in config.yaml."
-                )
+        if ds_name in used:
+            for key in ("path", "fasta"):
+                val = ds.get(key, "")
+                if not val:
+                    errors.append(
+                        f"{prefix}: '{key}' is missing or empty. "
+                        f"Set it in config.yaml under datasets > {ds_name}."
+                    )
+                elif "CHANGE_ME" in str(val):
+                    errors.append(
+                        f"{prefix}: '{key}' still contains 'CHANGE_ME': {val!r}. "
+                        "Replace it with a real path."
+                    )
+                elif key == "path" and not _dataset_on_disk(_resolve(val, config_path)):
+                    errors.append(
+                        f"{prefix}: no data found at {_resolve(val, config_path)}. "
+                        "Download it (run the pipeline with --setup), fix 'path:' in config.yaml, "
+                        f"or remove {ds_name} from the tools' datasets: lists."
+                    )
+                elif key == "fasta" and not _resolve(val, config_path).is_file():
+                    errors.append(
+                        f"{prefix}: FASTA file does not exist: {_resolve(val, config_path)}. "
+                        f"Check 'fasta:' under datasets > {ds_name} in config.yaml."
+                    )
 
         fmt = ds.get("format", "")
         if fmt and fmt not in VALID_FORMATS:
@@ -260,7 +267,7 @@ def _validate_datasets(datasets: dict, config_path: Path, errors: list[str]) -> 
                 f"{', '.join(sorted(VALID_FORMATS))}."
             )
 
-        acq = ds.get("acquisition", "").upper()
+        acq = str(ds.get("acquisition", "")).upper()
         if ds.get("acquisition") and acq not in VALID_ACQUISITIONS:
             errors.append(
                 f"{prefix}: 'acquisition' is {ds['acquisition']!r} but must be 'DDA' or 'DIA'."
@@ -334,100 +341,98 @@ def _docker_image_present(image: str) -> bool:
     return r.returncode == 0
 
 
+def _missing_fragpipe_jars(jars_dir: str) -> list[str]:
+    """Labels of the licensed FragPipe JARs that are not in jars_dir."""
+    if not jars_dir or "CHANGE_ME" in str(jars_dir):
+        return ["MSFragger", "IonQuant", "diaTracer"]
+    d = Path(str(jars_dir)).expanduser()
+    found = {p.name.lower() for p in d.glob("*.jar")} if d.is_dir() else set()
+    return [label for label, needle in (("MSFragger", "msfragger"), ("IonQuant", "ionquant"), ("diaTracer", "diatracer"))
+            if not any(needle in n for n in found)]
+
+
+def _version_problems(tool_name: str, ver: dict, ver_prefix: str) -> list[tuple[str, str]]:
+    """(reason, message) for everything missing from one enabled tool version's
+    docker setup. reason is "image", "jars" or "config" (see setup_status)."""
+    problems: list[tuple[str, str]] = []
+    image = str(ver.get("image") or "")
+    if not image or "CHANGE_ME" in image:
+        return [("config", f"{ver_prefix}: 'image' is missing or still 'CHANGE_ME'. Run the pipeline with --setup to set this tool up again.")]
+    if shutil.which("docker") and not _docker_image_present(image):
+        problems.append(("image", f"{ver_prefix}: docker image not pulled locally: {image}. "
+                                  "The pipeline offers to pull it on its next run."))
+
+    path_key = {"diann": "diann_bin", "fragpipe": "fragpipe_root"}.get(tool_name)
+    if path_key and (not ver.get(path_key) or "CHANGE_ME" in str(ver.get(path_key))):
+        problems.append(("config", f"{ver_prefix}: '{path_key}' is missing or still 'CHANGE_ME'. "
+                                   "Run the pipeline with --setup to set this tool up again."))
+
+    if tool_name == "fragpipe":
+        jars_dir = ver.get("jars_dir", "")
+        if not jars_dir or "CHANGE_ME" in str(jars_dir):
+            problems.append(("config", f"{ver_prefix}: 'jars_dir' is missing or still 'CHANGE_ME'. "
+                                       "Run the pipeline with --setup to collect the licensed JARs."))
+            return problems
+        for label in _missing_fragpipe_jars(jars_dir):
+            problems.append(("jars", f"{ver_prefix}: {label} JAR not found in jars_dir ({ver.get('jars_dir', '')}). "
+                                     "Run the pipeline with --setup to add it (or set enabled: false)."))
+    return problems
+
+
 def _validate_tool_docker(
     tool_name: str, ver: dict, ver_prefix: str, errors: list[str]
 ) -> None:
     """Check that the docker image (and any tool-specific extras) for an enabled version exist."""
-
-    image = ver.get("image", "")
-    if not image:
-        errors.append(
-            f"{ver_prefix}: 'image' is missing. Run: nextflow run setup.nf   to pull it."
-        )
-        return
-    if "CHANGE_ME" in image:
-        errors.append(f"{ver_prefix}: 'image' still contains 'CHANGE_ME'.")
-        return
-    if shutil.which("docker") and not _docker_image_present(image):
-        errors.append(
-            f"{ver_prefix}: docker image not pulled locally: {image}. "
-            "Run: nextflow run setup.nf   to pull it."
-        )
-
-    if tool_name == "diann":
-        diann_bin = ver.get("diann_bin", "")
-        if not diann_bin or "CHANGE_ME" in diann_bin:
-            errors.append(
-                f"{ver_prefix}: 'diann_bin' is missing or still 'CHANGE_ME'. "
-                "Run: nextflow run setup.nf   to detect the in-container binary path."
-            )
-
-    elif tool_name == "fragpipe":
-        fragpipe_root = ver.get("fragpipe_root", "")
-        if not fragpipe_root or "CHANGE_ME" in fragpipe_root:
-            errors.append(
-                f"{ver_prefix}: 'fragpipe_root' is missing or still 'CHANGE_ME'. "
-                "Run: nextflow run setup.nf   to detect the in-container FragPipe path."
-            )
-        jars_dir = ver.get("jars_dir", "")
-        if not jars_dir or "CHANGE_ME" in jars_dir:
-            errors.append(
-                f"{ver_prefix}: 'jars_dir' is missing or still 'CHANGE_ME'. "
-                "Run: nextflow run setup.nf   to collect the licensed MSFragger/IonQuant/diaTracer JARs."
-            )
-        else:
-            found = {p.name.lower() for p in Path(jars_dir).glob("*.jar")} if Path(jars_dir).is_dir() else set()
-            for label, needle in (("MSFragger", "msfragger"), ("IonQuant", "ionquant"), ("diaTracer", "diatracer")):
-                if not any(needle in n for n in found):
-                    errors.append(
-                        f"{ver_prefix}: {label} JAR not found in jars_dir ({jars_dir}). "
-                        "Run: nextflow run setup.nf   to add it (or disable FragPipe)."
-                    )
+    errors.extend(message for _reason, message in _version_problems(tool_name, ver, ver_prefix))
 
 
-# ── CLI: used by proteobench.nf to decide whether setup.nf needs to run ──────
+# ── CLI: used by proteobench.nf and setup.nf ─────────────────────────────────
+# Exit codes: 0 = no problems, 1 = problems found (printed one per line),
+# 2 = config.yaml could not be read, 3 = pyyaml is not installed. The callers
+# stop on 2 and 3 instead of treating an empty answer as "all fine".
 
 if __name__ == "__main__":
     import argparse
+    import json
     import sys
-
-    import yaml
 
     parser = argparse.ArgumentParser(description="Check config.yaml completeness.")
     parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--catalog", type=Path, default=CATALOG_PATH,
+                        help="Dataset catalog used to decide which missing datasets can be downloaded.")
     parser.add_argument(
-        "--check-docker-setup", action="store_true",
-        help="Only check docker/tool installation (images, FragPipe JARs), not datasets or search_params.",
-    )
-    parser.add_argument(
-        "--list-incomplete-tools", action="store_true",
-        help="Print (one per line) the tools whose docker setup is incomplete; used by setup.nf.",
-    )
-    parser.add_argument(
-        "--list-missing-datasets", action="store_true",
-        help="Print (one per line) the datasets used by enabled tools that are missing on disk "
-             "but downloadable from the catalog; used by proteobench.nf and setup.nf.",
+        "--setup-status", action="store_true",
+        help="Print the per-tool docker setup status and the missing downloadable datasets as JSON.",
     )
     args = parser.parse_args()
 
+    try:
+        import yaml
+    except ImportError:
+        print("Python package 'pyyaml' is not installed for this python3 "
+              f"({sys.executable}). Activate the pipeline's environment "
+              "(conda activate proteobench-pipeline) or run: python3 -m pip install pyyaml",
+              file=sys.stderr)
+        sys.exit(3)
+
     if not args.config.exists():
-        print(f"Config file not found: {args.config}")
-        sys.exit(1)
+        print(f"Config file not found: {args.config}", file=sys.stderr)
+        sys.exit(2)
+    try:
+        loaded_cfg = yaml.safe_load(args.config.read_text())
+    except yaml.YAMLError as exc:
+        print(f"{args.config} is not valid YAML. The problem is here:\n{exc}\n"
+              f"A copy of the previous version may be in {args.config}.bak", file=sys.stderr)
+        sys.exit(2)
+    if not isinstance(loaded_cfg, dict):
+        print(f"{args.config} is empty or not a YAML mapping.", file=sys.stderr)
+        sys.exit(2)
 
-    with open(args.config) as f:
-        loaded_cfg = yaml.safe_load(f)
-
-    if args.list_incomplete_tools:
-        for tool in incomplete_docker_tools(loaded_cfg):
-            print(tool)
+    if args.setup_status:
+        print(json.dumps(setup_status(loaded_cfg, args.config, args.catalog)))
         sys.exit(0)
 
-    if args.list_missing_datasets:
-        for name in missing_downloadable_datasets(loaded_cfg, args.config.resolve()):
-            print(name)
-        sys.exit(0)
-
-    found_errors = docker_setup_errors(loaded_cfg) if args.check_docker_setup else validate_config(loaded_cfg, args.config)
+    found_errors = validate_config(loaded_cfg, args.config)
     for e in found_errors:
         print(e)
     sys.exit(1 if found_errors else 0)

@@ -47,6 +47,22 @@ def _emit(tool, version, dataset, *, success, skipped=False, runtime_s=0.0,
     }))
 
 
+def resolve_paths(dataset_cfg: dict, global_cfg: dict, config_dir: Path) -> None:
+    """Make dataset paths and global.output_dir absolute, in place. Relative
+    paths are relative to the config file, not to the Nextflow task work
+    directory this script runs in (results written there would be lost with
+    the work directory). A leading ~ is expanded."""
+    def _abs(value):
+        path = Path(str(value)).expanduser()
+        return str(path if path.is_absolute() else config_dir / path)
+
+    for key in ("path", "fasta", "fasta_decoy"):
+        if dataset_cfg.get(key):
+            dataset_cfg[key] = _abs(dataset_cfg[key])
+    if global_cfg.get("output_dir"):
+        global_cfg["output_dir"] = _abs(global_cfg["output_dir"])
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run one ProteoBench job.")
     parser.add_argument("--config",       type=Path, required=True)
@@ -89,13 +105,7 @@ def main():
               success=False, error_msg=f"Dataset '{args.dataset}' not found in config")
         sys.exit(0)
 
-    # Relative dataset paths are relative to the config file, not to the
-    # Nextflow task work directory this script runs in.
-    config_dir = args.config.resolve().parent
-    for key in ("path", "fasta", "fasta_decoy"):
-        value = dataset_cfg.get(key)
-        if value and not Path(value).expanduser().is_absolute():
-            dataset_cfg[key] = str(config_dir / value)
+    resolve_paths(dataset_cfg, global_cfg, args.config.resolve().parent)
 
     RunnerClass = RUNNER_MAP.get(args.tool)
     if RunnerClass is None:

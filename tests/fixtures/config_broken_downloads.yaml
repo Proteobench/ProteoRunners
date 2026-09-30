@@ -1,0 +1,36 @@
+global:
+  output_dir: results
+  max_parallel_jobs: 1
+  threads_per_job: 1
+
+search_params:
+  enzyme: trypsin/p
+
+datasets:
+
+  MISSING_DDA:
+    path: CHANGE_ME
+    acquisition: DDA
+    format: raw
+    instrument: Orbitrap
+    fasta: CHANGE_ME
+
+  CORRUPT_DDA:
+    path: CHANGE_ME
+    acquisition: DDA
+    format: raw
+    instrument: Orbitrap
+    fasta: CHANGE_ME
+
+tools:
+
+  sage:
+    versions:
+      - id: "latest"
+        image: hello-world:latest
+        sage_bin: /app/sage
+        enabled: true
+
+    datasets:
+      - MISSING_DDA
+      - CORRUPT_DDA

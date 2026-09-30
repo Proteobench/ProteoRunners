@@ -1,0 +1,278 @@
+// Unit tests for the helpers in setup.nf that decide what setup does and how
+// it edits config.yaml as text. Run: nf-test test tests/nextflow/setup_functions.nf.test
+
+nextflow_function {
+    name "setup.nf helpers"
+    script "setup.nf"
+
+    test("versionOrder compares dotted versions numerically") {
+        function "versionOrder"
+        when {
+            function {
+                """
+                input[0] = '1.9.2'
+                input[1] = '1.10.0'
+                """
+            }
+        }
+        then {
+            assert function.success
+            assert function.result == -1
+        }
+    }
+
+    test("supportsDda starts at DIA-NN 2.1.0") {
+        function "supportsDda"
+        when {
+            function {
+                """
+                input[0] = '2.1.0'
+                """
+            }
+        }
+        then {
+            assert function.result == true
+        }
+    }
+
+    test("parseVersionEntries reads every version, including disabled ones") {
+        function "parseVersionEntries"
+        when {
+            function {
+                """
+                input[0] = file('${baseDir}/tests/fixtures/diann_block.yaml').text
+                """
+            }
+        }
+        then {
+            assert function.result.collect { v -> v.id } == ['1.8.1', '2.5.0']
+            assert function.result[1].enabled == 'false'
+            assert function.result[0].extra_args == '--keep-me'
+        }
+    }
+
+    test("disableVersions changes only the enabled line of that version") {
+        function "disableVersions"
+        when {
+            function {
+                """
+                input[0] = file('${baseDir}/tests/fixtures/diann_block.yaml').text
+                input[1] = ['1.8.1']
+                """
+            }
+        }
+        then {
+            def original = new File("${baseDir}/tests/fixtures/diann_block.yaml").text.readLines()
+            def changed = function.result.readLines()
+            assert changed.size() == original.size()
+            assert (0..<original.size()).findAll { i -> original[i] != changed[i] } == [7]
+            assert changed[7].trim() == 'enabled: false'
+        }
+    }
+
+    test("setEnabled true keeps the comment on the line") {
+        function "setEnabled"
+        when {
+            function {
+                """
+                input[0] = file('${baseDir}/tests/fixtures/diann_block.yaml').text
+                input[1] = ['2.5.0']
+                input[2] = true
+                """
+            }
+        }
+        then {
+            assert function.result.contains('enabled: true   # built later')
+        }
+    }
+
+    test("appendVersions adds a version at the end of the versions list") {
+        function "appendVersions"
+        when {
+            function {
+                """
+                input[0] = file('${baseDir}/tests/fixtures/diann_block.yaml').text
+                input[1] = '      - id: "2.1.0"\\n        image: diann:2.1.0\\n        enabled: true\\n'
+                """
+            }
+        }
+        then {
+            def ids = (function.result =~ /id: "([^"]+)"/).collect { m -> m[1] }
+            assert ids == ['1.8.1', '2.5.0', '2.1.0']
+            assert function.result.contains('    datasets:\n      - Entrapment_DIA')
+        }
+    }
+
+    test("addDatasetsToBlock appends to an existing list") {
+        function "addDatasetsToBlock"
+        when {
+            function {
+                """
+                input[0] = file('${baseDir}/tests/fixtures/diann_block.yaml').text
+                input[1] = ['X']
+                """
+            }
+        }
+        then {
+            assert function.result.contains('      - HYE_Astral\n      - X\n\n    extra:')
+        }
+    }
+
+    test("addDatasetsToBlock turns an empty list into a list") {
+        function "addDatasetsToBlock"
+        when {
+            function {
+                """
+                input[0] = '  sage:\\n    datasets: []   # note\\n    extra: {}'
+                input[1] = ['X']
+                """
+            }
+        }
+        then {
+            assert function.result == '  sage:\n    datasets:\n      - X\n    extra: {}'
+        }
+    }
+
+    test("commentOutDatasets comments out only the named dataset") {
+        function "commentOutDatasets"
+        when {
+            function {
+                """
+                input[0] = file('${baseDir}/tests/fixtures/diann_block.yaml').text
+                input[1] = ['HYE_Astral']
+                """
+            }
+        }
+        then {
+            assert function.result.contains('# - HYE_Astral')
+            assert function.result.contains('      - Entrapment_DIA\n')
+        }
+    }
+
+    test("parseToolBlocks finds no tools in 'tools: {}'") {
+        function "parseToolBlocks"
+        when {
+            function {
+                """
+                input[0] = 'global:\\n  output_dir: x\\n\\ntools: {}\\n'
+                """
+            }
+        }
+        then {
+            assert function.success
+            assert function.result == [:]
+        }
+    }
+
+    test("mergeDatasets replaces the named entry, appends new ones, keeps the rest") {
+        function "mergeDatasets"
+        when {
+            function {
+                """
+                input[0] = file('${baseDir}/tests/fixtures/static_section.yaml').text
+                input[1] = [A: [path: '/d/A', fasta: '/d/A/b.fasta', acquisition: 'DIA', format: 'raw', instrument: 'Astral'],
+                            B: [path: '/d/B', fasta: '/d/B/b.fasta', acquisition: 'DDA', format: 'raw', instrument: 'Orbitrap']]
+                input[2] = ['A']
+                """
+            }
+        }
+        then {
+            assert function.result.contains('# my own data\n  Mine:\n    path: /x\n')
+            assert function.result.contains('  A:\n    path: "/d/A"')
+            assert !function.result.contains('data/A/a.fasta')
+            assert function.result.contains('  B:\n    path: "/d/B"')
+        }
+    }
+
+    test("mergeDatasets without changes returns the text unchanged") {
+        function "mergeDatasets"
+        when {
+            function {
+                """
+                input[0] = file('${baseDir}/tests/fixtures/static_section.yaml').text
+                input[1] = [:]
+                input[2] = []
+                """
+            }
+        }
+        then {
+            assert function.result == new File("${baseDir}/tests/fixtures/static_section.yaml").text
+        }
+    }
+
+    test("mergeDatasets fills 'datasets: {}' with a plain key and the new entry") {
+        function "mergeDatasets"
+        when {
+            function {
+                """
+                input[0] = 'global:\\n  output_dir: x\\n\\ndatasets: {}\\n\\n'
+                input[1] = [B: [path: '/d/B', acquisition: 'DDA', format: 'raw', instrument: 'Orbitrap']]
+                input[2] = []
+                """
+            }
+        }
+        then {
+            assert function.result == 'global:\n  output_dir: x\n\ndatasets:\n  B:\n    path: "/d/B"\n    acquisition: DDA\n    format: raw\n    instrument: Orbitrap\n\n'
+        }
+    }
+
+    test("setOutputDir quotes a path with spaces") {
+        function "setOutputDir"
+        when {
+            function {
+                """
+                input[0] = file('${baseDir}/tests/fixtures/static_section.yaml').text
+                input[1] = '/r s/out'
+                """
+            }
+        }
+        then {
+            assert function.result.contains('  output_dir: "/r s/out"\n')
+            assert !function.result.contains('CHANGE_ME')
+        }
+    }
+
+    // tool, started by the gate?, expected plan
+    [
+        ['sage',     true,  'keep'],     // complete
+        ['maxquant', true,  'repair'],   // image missing
+        ['diann',    true,  'new'],      // config entry broken
+        ['fragpipe', true,  'skip'],     // disabled, gate leaves it alone
+        ['alphadia', true,  'skip'],     // not configured
+        ['fragpipe', false, 'offer'],    // disabled, --setup offers it
+        ['alphadia', false, 'offer'],    // not configured, --setup offers it
+    ].each { tool, fromGate, expected ->
+        test("toolPlan: ${tool} (fromGate=${fromGate}) -> ${expected}") {
+            function "toolPlan"
+            when {
+                function {
+                    """
+                    def st = [tools: [sage: [status: 'complete', problems: []], fragpipe: [status: 'disabled', problems: []],
+                                      maxquant: [status: 'incomplete', problems: [[reason: 'image']]],
+                                      diann: [status: 'incomplete', problems: [[reason: 'config']]]]]
+                    input[0] = '${tool}'
+                    input[1] = [firstRun: false, fromGate: ${fromGate}, status: st]
+                    """
+                }
+            }
+            then {
+                assert function.result == expected
+            }
+        }
+    }
+
+    test("toolPlan: every tool is new on a first run") {
+        function "toolPlan"
+        when {
+            function {
+                """
+                input[0] = 'sage'
+                input[1] = [firstRun: true, fromGate: true, status: [tools: [:]]]
+                """
+            }
+        }
+        then {
+            assert function.result == 'new'
+        }
+    }
+}

@@ -1,0 +1,13 @@
+global:
+  output_dir: CHANGE_ME/results
+
+datasets:
+
+  # my own data
+  Mine:
+    path: /x
+
+  A:
+    path: data/A
+    fasta: data/A/a.fasta
+

@@ -1,0 +1,26 @@
+# Test catalog: the URLs point at the tiny archives in tests/fixtures/datasets.
+# @FIXTURES@ is replaced by the absolute path of tests/fixtures.
+
+TINY_DDA:
+  url: file://@FIXTURES@/datasets/TINY_DDA.tar.gz
+  acquisition: DDA
+  format: raw
+  instrument: Orbitrap
+
+TINY_DIA:
+  url: file://@FIXTURES@/datasets/TINY_DIA.tar.gz
+  acquisition: DIA
+  format: raw
+  instrument: Astral
+
+MISSING_DDA:
+  url: file://@FIXTURES@/datasets/does_not_exist.tar.gz
+  acquisition: DDA
+  format: raw
+  instrument: Orbitrap
+
+CORRUPT_DDA:
+  url: file://@FIXTURES@/datasets/CORRUPT.tar.gz
+  acquisition: DDA
+  format: raw
+  instrument: Orbitrap

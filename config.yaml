@@ -271,7 +271,7 @@ tools:
       - id: "24.0"
         image: fcyucn/fragpipe:latest
         fragpipe_root: /fragpipe_bin/fragpipe-24.0/fragpipe-24.0
-        jars_dir: /home/robbe/PB_output/tools/fragpipe_jars
+        jars_dir: CHANGEME/fragpipe_jars
         container_python: /usr/bin/python3
         enabled: true
 

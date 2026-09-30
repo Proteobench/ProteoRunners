@@ -89,6 +89,14 @@ def main():
               success=False, error_msg=f"Dataset '{args.dataset}' not found in config")
         sys.exit(0)
 
+    # Relative dataset paths are relative to the config file, not to the
+    # Nextflow task work directory this script runs in.
+    config_dir = args.config.resolve().parent
+    for key in ("path", "fasta", "fasta_decoy"):
+        value = dataset_cfg.get(key)
+        if value and not Path(value).expanduser().is_absolute():
+            dataset_cfg[key] = str(config_dir / value)
+
     RunnerClass = RUNNER_MAP.get(args.tool)
     if RunnerClass is None:
         _emit(args.tool, args.version, args.dataset,

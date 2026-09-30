@@ -92,13 +92,15 @@ workflow {
     if (configFile.exists()) {
         def checkProc = ["python3", "${projectDir}/config_validator.py",
                           "--config", configFile.absolutePath, "--check-docker-setup"].execute()
-        def checkOut = new StringBuilder(), checkErr = new StringBuilder()
+        def checkOut = new StringBuilder()
+        def checkErr = new StringBuilder()
         checkProc.consumeProcessOutput(checkOut, checkErr)
         checkProc.waitFor()
         setupOk = (checkProc.exitValue() == 0)
         if (!setupOk) {
             log.warn "Docker setup looks incomplete for one or more enabled tools:"
             checkOut.toString().readLines().each { log.warn "  - ${it}" }
+            log.warn "These versions are checked because they have 'enabled: true' in ${configFile}. Set 'enabled: false' for a version you do not want, and it is no longer checked."
         }
     }
 

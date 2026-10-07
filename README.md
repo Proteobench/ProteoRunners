@@ -122,6 +122,7 @@ The scripts use Nextflow's strict syntax, which Nextflow 26.04+ requires by defa
 | `--no_preflight` | Skip preflight checks before each job |
 | `--max_parallel_jobs 4` | Override Nextflow concurrency (default: `global.max_parallel_jobs`, or 6) |
 | `--publish_dir /path` | Where `run_summary_nf.tsv` is published (default: `global.output_dir`, or `./results`) |
+| `--unfiltered_outputs` | Keep the full raw tool output of every job. By default, successful jobs are filtered down to the files needed for ProteoBench upload; failed jobs are never filtered |
 
 Example — run only DIA-NN jobs, skip preflight:
 

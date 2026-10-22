@@ -131,7 +131,7 @@ search_params:
 # Required keys per dataset:
 #   path        — directory containing the raw MS files
 #   acquisition — DDA (data-dependent) or DIA (data-independent)
-#   format      — file format: raw | mzml | d | wiff | mgf
+#   format      — file format: raw | mzml | d | mgf
 #   instrument  — instrument type (informational); used by FragPipe to pick workflow
 #   fasta       — protein sequence database (FASTA format)
 #
@@ -199,13 +199,6 @@ datasets:
     format: d       # Bruker .d directory format (timsTOF)
     instrument: timstof
     fasta: data/HYE_diaPASEF/ProteoBenchFASTA_MixedSpecies_HYE.fasta
-
-  HYE_ZenoSWATH:
-    path: data/HYE_ZenoSWATH
-    acquisition: DIA
-    format: wiff    # SCIEX .wiff format (ZenoTOF)
-    instrument: ZenoTOF
-    fasta: data/HYE_ZenoSWATH/ProteoBenchFASTA_MixedSpecies_HYE.fasta
 
   PYE_diaPASEF:
     path: data/PYE_diaPASEF
@@ -323,7 +316,7 @@ tools:
       library: ""
 
   # ---------------------------------------------------------------------------
-  # Sage — DDA only; requires mzML input (not raw/d/wiff)
+  # Sage — DDA only; requires mzML input (not raw/d)
   # Docker image: ghcr.io/lazear/sage:latest
   # Sage reads mzML directly from the dataset's normal path if format: mzml,
   # otherwise it automatically looks in a "<name>_mzml" sibling directory (see

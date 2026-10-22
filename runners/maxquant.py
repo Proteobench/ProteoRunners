@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 _MQ_LCMS_RUN_TYPE = {DDA: "Standard", DIA: "DIA"}
 
 # instrument (dataset_cfg) -> MaxQuant 2.8 --instrumentType code.
-_MQ_INSTRUMENT_CODE = {"orbitrap": "TO", "astral": "TA", "timstof": "BT", "zenotof": "SC"}
+_MQ_INSTRUMENT_CODE = {"orbitrap": "TO", "astral": "TA", "timstof": "BT"}
 
 
 class MaxQuantRunner(BaseRunner):

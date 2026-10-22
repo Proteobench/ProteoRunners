@@ -95,7 +95,6 @@ Available dataset names (source of truth: [`nextflow/datasets_catalog.yaml`](nex
 | `HYE_Astral_Single_Cell` | DIA | raw | Astral |
 | `HYE_AIF` | DIA | raw | Orbitrap |
 | `HYE_diaPASEF` | DIA | d | timstof |
-| `HYE_ZenoSWATH` | DIA | wiff | ZenoTOF |
 | `PYE_diaPASEF` | DIA | d | timstof |
 | `Entrapment_DIA` | DIA | raw | Orbitrap |
 
@@ -227,8 +226,8 @@ datasets:
   My_New_Dataset:
     path: /data/my_experiment          # directory containing the MS files
     acquisition: DIA                   # DDA or DIA
-    format: raw                        # raw | mzml | d | wiff | mgf
-    instrument: Orbitrap               # Orbitrap | Astral | timstof | ZenoTOF
+    format: raw                        # raw | mzml | d | mgf
+    instrument: Orbitrap               # Orbitrap | Astral | timstof
     fasta: /data/fastas/human.fasta
     fasta_decoy: /data/fastas/human_decoy.fasta   # optional; FragPipe generates one automatically if omitted
 
@@ -249,8 +248,8 @@ To let setup download a dataset automatically instead of a user pointing `path:`
 My_New_Dataset:
   url: https://example.org/path/to/My_New_Dataset.zip
   acquisition: DIA          # DDA or DIA
-  format: raw                # raw | mzml | d | wiff | mgf
-  instrument: Orbitrap       # Orbitrap | Astral | timstof | ZenoTOF
+  format: raw                # raw | mzml | d | mgf
+  instrument: Orbitrap       # Orbitrap | Astral | timstof
 ```
 
 The archive may use the ProteoBench layout (`raws/<acquisition>/` + `fasta/<name>.zip`) or contain, at its top level: the MS files, one `*.fasta` (+ optionally one decoy fasta with `decoy` in the name), and optionally an `mzml/` subfolder. Run the pipeline with `--setup` — it offers the new dataset (scoped to tools it's relevant to), downloads and unzips it, and writes the resolved `path:`/`fasta:` into `config.yaml` automatically.

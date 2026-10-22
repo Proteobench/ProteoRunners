@@ -20,7 +20,7 @@ except ImportError:
     ENZYME_MAP: dict = {}
     MOD_REGISTRY: dict = {}
 
-VALID_FORMATS = {"raw", "mzml", "d", "wiff", "mgf"}
+VALID_FORMATS = {"raw", "mzml", "d", "mgf"}
 VALID_ACQUISITIONS = {"DDA", "DIA"}
 
 # Fields that must be 0 < value <= 1

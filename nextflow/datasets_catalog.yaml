@@ -13,8 +13,8 @@
 # To add a new downloadable dataset, add an entry here with the real url,
 # then re-run: nextflow run setup.nf
 #
-# acquisition: DDA | DIA — format: raw | mzml | d | wiff | mgf
-# instrument (informational): Orbitrap | Astral | timstof | ZenoTOF
+# acquisition: DDA | DIA — format: raw | mzml | d | mgf
+# instrument (informational): Orbitrap | Astral | timstof
 
 HYE_DDA_Orbitrap:
   url: https://proteobench.cubimed.rub.de/raws/DDA/all_data_LFQ_Quant_DDA_QExactive.tar.gz
@@ -51,12 +51,6 @@ HYE_diaPASEF:
   acquisition: DIA
   format: d
   instrument: timstof
-
-HYE_ZenoSWATH:
-  url: https://proteobench.cubimed.rub.de/raws/DIA-ZenoSWATH/all_data_LFQ_Quant_DIA_ZenoSWATH.tar.gz
-  acquisition: DIA
-  format: wiff
-  instrument: ZenoTOF
 
 PYE_diaPASEF:
   url: https://proteobench.cubimed.rub.de/raws/DIA-plasma/all_data_LFQ_Quant_DIA_Plasma.tar.gz

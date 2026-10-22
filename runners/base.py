@@ -370,7 +370,7 @@ class BaseRunner(ABC):
                 errors.append(
                     f"No {fmt!r} files found in {dataset_path}. "
                     "Verify that MS data files are present and that 'format:' matches "
-                    "the actual file type (raw / mzml / d / wiff / mgf)."
+                    "the actual file type (raw / mzml / d / mgf)."
                 )
         return errors
 
@@ -399,10 +399,6 @@ class BaseRunner(ABC):
         if fmt == "d":
             # Bruker .d directories
             return sorted(p for p in dataset_path.iterdir() if p.is_dir() and p.suffix == ".d")
-        if fmt == "wiff":
-            # SCIEX: .wiff (older) and .wiff2 (ZenoTOF); companion .wiff.scan
-            # files are read by the tool alongside and are not listed here.
-            return sorted(dataset_path.glob("*.wiff")) + sorted(dataset_path.glob("*.wiff2"))
         if fmt == "mgf":
             return sorted(dataset_path.glob("*.mgf")) + sorted(dataset_path.glob("*.mgf.gz"))
         return []

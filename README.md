@@ -93,6 +93,8 @@ Available dataset names (source of truth: [`nextflow/datasets_catalog.yaml`](nex
 | `HYE_DDA_Astral` | DDA | raw | Astral |
 | `HYE_Astral` | DIA | raw | Astral |
 | `HYE_Astral_Single_Cell` | DIA | raw | Astral |
+| `HYE_Astral_lowinput` | DIA | raw | Astral |
+| `HYE_timsTOF_lowinput` | DIA | d | timstof |
 | `HYE_AIF` | DIA | raw | Orbitrap |
 | `HYE_diaPASEF` | DIA | d | timstof |
 | `PYE_diaPASEF` | DIA | d | timstof |

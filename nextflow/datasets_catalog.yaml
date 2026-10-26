@@ -40,6 +40,30 @@ HYE_Astral_Single_Cell:
   format: raw
   instrument: Astral
 
+HYE_Astral_Lowinput:
+  url: https://proteobench.cubimed.rub.de/raws/DIA-astral-lowinput/all_data_LFQ_Quant_DIA_Astral_lowinput.tar.gz
+  acquisition: DIA
+  format: raw
+  instrument: Astral
+
+HYE_diaPASEF_lowinput:
+  url: https://proteobench.cubimed.rub.de/raws/DIA-timstof-lowinput/all_data_LFQ_Quant_DIA_timstof_lowinput.tar.gz
+  acquisition: DIA
+  format: raw
+  instrument: timstof
+
+HYE_Astral_lowinput:
+  url: https://proteobench.cubimed.rub.de/raws/DIA-astral-lowinput/all_data_LFQ_Quant_DIA_Astral_lowinput.tar.gz
+  acquisition: DIA
+  format: raw
+  instrument: Astral
+
+HYE_timsTOF_lowinput:
+  url: https://proteobench.cubimed.rub.de/raws/DIA-timstof-lowinput/all_data_LFQ_Quant_DIA_timstof_lowinput.tar.gz
+  acquisition: DIA
+  format: d
+  instrument: timstof
+
 HYE_AIF:
   url: https://proteobench.cubimed.rub.de/raws/DIA/all_data_LFQ_Quant_DIA_AIF.tar.gz
   acquisition: DIA

@@ -16,9 +16,11 @@ from typing import Any
 # Guard the import so the validator can still be imported standalone for testing.
 try:
     from runners.base import ENZYME_MAP, MOD_REGISTRY
+    from runners.sweep import sweep_sets
 except ImportError:
     ENZYME_MAP: dict = {}
     MOD_REGISTRY: dict = {}
+    sweep_sets = None
 
 VALID_FORMATS = {"raw", "mzml", "d", "mgf"}
 VALID_ACQUISITIONS = {"DDA", "DIA"}
@@ -151,6 +153,7 @@ def validate_config(cfg: dict, config_path: Path) -> list[str]:
     _validate_search_params(cfg["search_params"], config_path, errors)
     _validate_datasets(cfg["datasets"], config_path, errors, set(used_datasets(cfg)))
     _validate_tools(cfg["tools"], cfg["datasets"], config_path, errors)
+    _validate_sweeps(cfg["tools"], cfg["search_params"], config_path, errors)
 
     return errors
 
@@ -272,6 +275,36 @@ def _validate_datasets(datasets: dict, config_path: Path, errors: list[str], use
             errors.append(
                 f"{prefix}: 'acquisition' is {ds['acquisition']!r} but must be 'DDA' or 'DIA'."
             )
+
+
+def _validate_sweeps(tools: dict, search_params: dict, config_path: Path, errors: list[str]) -> None:
+    """Each sweep set must only use search_params keys (or extra_args), and the
+    search_params it produces must pass the same checks as search_params itself."""
+    if sweep_sets is None:
+        return
+    base_errors: list[str] = []   # already reported for search_params itself
+    _validate_search_params(search_params, config_path, base_errors)
+    for tool_name, tool_cfg in tools.items():
+        if not isinstance(tool_cfg, dict) or not tool_cfg.get("sweep"):
+            continue
+        prefix = f"tools > {tool_name} > sweep"
+        sweep = tool_cfg["sweep"]
+        if not (isinstance(sweep, dict) or (isinstance(sweep, list) and all(isinstance(s, dict) for s in sweep))):
+            errors.append(f"{prefix}: should be a mapping of value lists, or a list of parameter sets.")
+            continue
+        for i, params in enumerate(sweep_sets(tool_cfg)):
+            where = f"{prefix} (set {i + 1}: {params})"
+            unknown = [k for k in params if k != "extra_args" and k not in search_params]
+            if unknown:
+                errors.append(
+                    f"{where}: {', '.join(unknown)} not in search_params. Use search_params keys, "
+                    "or extra_args for tool flags (add the key to search_params first if it is valid)."
+                )
+            _validate_extra_args(params.get("extra_args"), f"{where} > extra_args", errors)
+            set_errors: list[str] = []
+            overrides = {k: v for k, v in params.items() if k != "extra_args"}
+            _validate_search_params({**search_params, **overrides}, config_path, set_errors)
+            errors += [f"{where}: {e}" for e in set_errors if e not in base_errors]
 
 
 def _validate_extra_args(value, where: str, errors: list[str]) -> None:

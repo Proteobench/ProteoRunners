@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import yaml
 from runners import RUNNER_MAP
+from runners.sweep import expand_versions
 
 logging.basicConfig(
     level=logging.INFO,
@@ -91,7 +92,7 @@ def main():
         sys.exit(0)
 
     version_cfg = next(
-        (v for v in tool_cfg.get("versions", []) if str(v["id"]) == args.version),
+        (v for v in expand_versions(tool_cfg) if str(v["id"]) == args.version),
         None,
     )
     if not version_cfg:

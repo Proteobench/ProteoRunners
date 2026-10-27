@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import yaml
 from runners import RUNNER_MAP
+from runners.sweep import expand_versions
 
 
 def load_config(path: Path) -> dict:
@@ -39,7 +40,7 @@ def enumerate_jobs(cfg: dict, tool_filter=None, dataset_filter=None) -> list[dic
             print(f"WARNING: no runner for tool '{tool_name}'; skipping.", file=sys.stderr)
             continue
 
-        for version_cfg in tool_cfg.get("versions", []):
+        for version_cfg in expand_versions(tool_cfg):
             if not version_cfg.get("enabled", False):
                 continue
 

@@ -902,6 +902,7 @@ def renderTool(tool, r, existingBlock, resolvedDatasets) {
         sb << datasetsFor(tool, existingBlock, resolvedDatasets)
         sb << extraFor(existingBlock, "    extra: {}\n\n")
     }
+    sb << (extractSubBlock(existingBlock ?: '', 'sweep') ?: '')   // keep a hand-written sweep
     return sb.toString()
 }
 

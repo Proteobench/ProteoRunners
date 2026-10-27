@@ -48,8 +48,9 @@ KEEP_BASENAMES_FRAGPIPE_BY_ACQUISITION = {
     "DIA": {"report.tsv", "report.parquet", "fragpipe.workflow"},
 }
 
-# Never deleted: the pipeline's own skip/rerun marker (see BaseRunner.run()).
-ALWAYS_KEEP = {".done"}
+# Never deleted: the pipeline's own skip/rerun marker and the parameter set of
+# a sweep job (see BaseRunner.run()).
+ALWAYS_KEEP = {".done", "sweep.json"}
 
 
 def main():

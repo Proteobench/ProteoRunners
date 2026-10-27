@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config_validator import validate_config
 from runners import RUNNER_MAP
 from runners.base import BaseRunner, RunResult
+from runners.sweep import expand_versions, sweep_label, unsupported_sweep
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,7 +88,10 @@ def build_jobs(cfg: dict, tool_filter: str | None, dataset_filter: str | None) -
             logger.warning("No runner implemented for tool '%s'; skipping.", tool_name)
             continue
 
-        for version_cfg in tool_cfg.get("versions", []):
+        if warning := unsupported_sweep(tool_name, tool_cfg):
+            logger.warning(warning)
+
+        for version_cfg in expand_versions(tool_cfg, tool_name):
             if not version_cfg.get("enabled", False):
                 continue
 
@@ -130,10 +134,11 @@ def preflight_all(jobs: list[BaseRunner]) -> bool:
     return all_ok
 
 
-def write_summary(results: list[RunResult], output_dir: Path) -> Path:
+def write_summary(results: list[RunResult], jobs: list[BaseRunner], output_dir: Path) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     summary_path = output_dir / f"run_summary_{ts}.tsv"
-    fieldnames = ["tool", "version", "dataset", "success", "skipped", "runtime_s", "output_dir", "error_msg"]
+    fieldnames = ["tool", "version", "dataset", "success", "skipped", "runtime_s", "output_dir", "error_msg", "sweep"]
+    sweeps = {(j.tool_name, j.version_id, j.dataset_name): sweep_label(j.version_cfg.get("sweep")) for j in jobs}
     with open(summary_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
@@ -147,6 +152,7 @@ def write_summary(results: list[RunResult], output_dir: Path) -> Path:
                 "runtime_s": f"{r.runtime_s:.1f}",
                 "output_dir": r.output_dir,
                 "error_msg": r.error_msg,
+                "sweep": sweeps.get((r.tool, r.version, r.dataset), ""),
             })
     return summary_path
 
@@ -375,7 +381,7 @@ Examples:
         results = _run_plain(jobs, max_workers)
 
     print_summary(results)
-    summary_path = write_summary(results, output_dir)
+    summary_path = write_summary(results, jobs, output_dir)
 
     n_skip = sum(r.skipped for r in results)
     n_ok   = sum(r.success and not r.skipped for r in results)

@@ -186,6 +186,20 @@ datasets:
     instrument: Astral
     fasta: data/HYE_Astral_Single_Cell/ProteoBenchFASTA_DDAQuantification_noecoli.fasta
 
+  HYE_Astral_lowinput:
+    path: data/HYE_Astral_lowinput
+    acquisition: DIA
+    format: raw
+    instrument: Astral
+    fasta: data/HYE_Astral_lowinput/ProteoBenchFASTA_MixedSpecies_HYE.fasta
+
+  HYE_timsTOF_lowinput:
+    path: data/HYE_timsTOF_lowinput
+    acquisition: DIA
+    format: d
+    instrument: timstof
+    fasta: data/HYE_timsTOF_lowinput/ProteoBenchFASTA_MixedSpecies_HYE.fasta
+
   HYE_AIF:
     path: data/HYE_AIF
     acquisition: DIA
@@ -286,6 +300,8 @@ tools:
       - Entrapment_DIA
       # - HYE_Astral
       # - HYE_Astral_Single_Cell
+      # - HYE_Astral_lowinput
+      # - HYE_timsTOF_lowinput
       # - HYE_diaPASEF
       # - HYE_DDA_Orbitrap    # requires supports_dda: true version
 
@@ -293,6 +309,17 @@ tools:
       # Path to a pre-built spectral library (.tsv/.speclib/.predicted.speclib).
       # Leave empty for library-free mode (DIA-NN generates its own library).
       library: ""
+
+    # Optional parameter sweep: every enabled version runs once per parameter
+    # set, each in its own folder <tool>_v<version>-<hash> with a sweep.json
+    # that records the set. Keys are search_params keys, plus extra_args for
+    # flags the pipeline does not model. A mapping is a grid (every
+    # combination); a list gives hand-picked sets. Works for every tool except
+    # MaxQuant, whose sweep is ignored (see README, Parameter sweeps).
+    # sweep:
+    #   fragment_mass_tolerance_ppm: [10, 15]
+    #   precursor_mass_tolerance_ppm: [4, 10]
+    #   extra_args: ["", "--window 8"]
 
   # ---------------------------------------------------------------------------
   # AlphaDIA — DIA only

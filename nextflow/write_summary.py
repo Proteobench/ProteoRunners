@@ -10,7 +10,7 @@ import csv
 import json
 import sys
 
-FIELDS = ["tool", "version", "dataset", "success", "skipped", "runtime_s", "output_dir", "error_msg"]
+FIELDS = ["tool", "version", "dataset", "success", "skipped", "runtime_s", "output_dir", "error_msg", "sweep"]
 
 writer = csv.DictWriter(
     sys.stdout, fieldnames=FIELDS, delimiter="\t", extrasaction="ignore"

@@ -156,6 +156,9 @@ workflow {
     if (enumProc.exitValue() != 0) {
         error "enumerate_jobs.py failed (exit ${enumProc.exitValue()}):\n${enumStderr}"
     }
+    enumStderr.toString().readLines()
+              .findAll { line -> line.startsWith("WARNING: ") }
+              .each    { line -> log.warn line.substring("WARNING: ".length()) }
 
     def enumOut = enumStdout.toString()
 

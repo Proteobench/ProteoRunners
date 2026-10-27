@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import json
 import logging
 import os
 import re
@@ -173,7 +174,8 @@ class BaseRunner(ABC):
         self.dataset_cfg = dataset_cfg
         self.version_cfg = version_cfg
         self.global_cfg = global_cfg
-        self.search_params = search_params
+        # A version entry may override search_params (sweep sets do, see runners/sweep.py)
+        self.search_params = {**search_params, **(version_cfg.get("search_params") or {})}
         self.extra = tool_cfg.get("extra", {}) or {}
 
         # Entrapment datasets ship a pre-digested, peptide-level FASTA. Any real
@@ -527,6 +529,12 @@ class BaseRunner(ABC):
             )
 
         output_dir.mkdir(parents=True, exist_ok=True)
+        if "sweep" in self.version_cfg:
+            (output_dir / "sweep.json").write_text(json.dumps({
+                "sweep": self.version_cfg["sweep"],
+                "search_params": self.search_params,
+                "extra_args": self.version_cfg.get("extra_args"),
+            }, indent=2) + "\n")
         stdout_log = output_dir / "stdout.log"
         stderr_log = output_dir / "stderr.log"
         input_files = self.get_input_files()

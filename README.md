@@ -93,6 +93,8 @@ Available dataset names (source of truth: [`nextflow/datasets_catalog.yaml`](nex
 | `HYE_DDA_Astral` | DDA | raw | Astral |
 | `HYE_Astral` | DIA | raw | Astral |
 | `HYE_Astral_Single_Cell` | DIA | raw | Astral |
+| `HYE_Astral_lowinput` | DIA | raw | Astral |
+| `HYE_timsTOF_lowinput` | DIA | d | timstof |
 | `HYE_AIF` | DIA | raw | Orbitrap |
 | `HYE_diaPASEF` | DIA | d | timstof |
 | `PYE_diaPASEF` | DIA | d | timstof |
@@ -217,6 +219,32 @@ tools:
 
 ---
 
+## Parameter sweeps
+
+A tool block can hold a `sweep:` section. Every enabled version of that tool then runs once per parameter set, on every dataset in its `datasets:` list. Keys are `search_params` keys, plus `extra_args` for flags the pipeline does not model. A mapping runs every combination (a grid); a list runs hand-picked sets:
+
+```yaml
+tools:
+  diann:
+    sweep:                                   # grid: 2 x 2 = 4 sets per version
+      fragment_mass_tolerance_ppm: [10, 15]
+      extra_args: ["", "--window 8"]
+
+    # sweep:                                 # or: explicit sets
+    #   - {fragment_mass_tolerance_ppm: 10}
+    #   - {fragment_mass_tolerance_ppm: 15, match_between_runs: false}
+```
+
+In a grid, every value list is a list of choices. A parameter whose value is itself a list therefore needs a list of lists: `variable_mods: [["Oxidation (M)"], []]` runs once with and once without the modification.
+
+Each set gets its own output folder, `<tool>_v<version>-<hash>`, and its own row in the run summary, whose `sweep` column shows the set (e.g. `fragment_mass_tolerance_ppm=15, extra_args=--window 8`). The hash depends only on the parameter set, so the same set has the same hash for every version and on every re-run (a finished set is skipped through its `.done` marker). `sweep.json` in the folder records the set, the resulting `search_params` and the `extra_args`; it is kept when outputs are filtered. Without a `sweep:` section nothing changes.
+
+A set that appears twice runs once. Sets that differ only in how they are written are the same set: an empty `extra_args` counts as none, `15` and `15.0` are equal, and `extra_args` written as the string `"--window 8"` equals the list `["--window", "8"]`.
+
+**MaxQuant cannot be swept.** Its `sweep:` section is ignored with a warning, and its versions run without it. MaxQuant 2.8+ writes its results to a `combined/` folder next to the raw files, which every MaxQuant run on that dataset shares, so sweep sets running in parallel would mix their results.
+
+---
+
 ## Adding a new dataset
 
 Add a block under `datasets:` in `config.yaml`, then add the dataset name to the `datasets:` list of each tool that should run on it:
@@ -308,7 +336,7 @@ nf-test test tests/nextflow                 # about 2 minutes
 - `tests/nextflow/setup_functions.nf.test`: how setup decides what to do per tool, and how it edits `config.yaml` as text.
 - `tests/nextflow/pipeline.nf.test`: non-interactive runs from a fresh folder (first run, missing image, missing dataset, broken downloads, nothing to do). Datasets come from tiny archives in `tests/fixtures/datasets` via `file://` URLs, so no network is needed for them. These tests need Docker; they use fake image tags, the tiny `hello-world` image, and the Sage image for the first-run test.
 
-**Python ([pytest](https://pytest.org))** tests `config_validator.py` and the path handling of `run_single_job.py`, with a fake Docker:
+**Python ([pytest](https://pytest.org))** tests `config_validator.py`, the path handling of `run_single_job.py` (with a fake Docker) and parameter sweeps (`tests/python/test_sweep.py`):
 
 ```bash
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install -r requirements-dev.txt   # once

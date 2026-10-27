@@ -16,10 +16,11 @@ from typing import Any
 # Guard the import so the validator can still be imported standalone for testing.
 try:
     from runners.base import ENZYME_MAP, MOD_REGISTRY
-    from runners.sweep import sweep_sets
+    from runners.sweep import NO_SWEEP_TOOLS, sweep_sets
 except ImportError:
     ENZYME_MAP: dict = {}
     MOD_REGISTRY: dict = {}
+    NO_SWEEP_TOOLS: dict = {}
     sweep_sets = None
 
 VALID_FORMATS = {"raw", "mzml", "d", "mgf"}
@@ -286,6 +287,8 @@ def _validate_sweeps(tools: dict, search_params: dict, config_path: Path, errors
     _validate_search_params(search_params, config_path, base_errors)
     for tool_name, tool_cfg in tools.items():
         if not isinstance(tool_cfg, dict) or not tool_cfg.get("sweep"):
+            continue
+        if tool_name in NO_SWEEP_TOOLS:   # ignored with a warning, see runners/sweep.py
             continue
         prefix = f"tools > {tool_name} > sweep"
         sweep = tool_cfg["sweep"]

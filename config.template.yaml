@@ -314,7 +314,8 @@ tools:
     # set, each in its own folder <tool>_v<version>-<hash> with a sweep.json
     # that records the set. Keys are search_params keys, plus extra_args for
     # flags the pipeline does not model. A mapping is a grid (every
-    # combination); a list gives hand-picked sets. Works for every tool.
+    # combination); a list gives hand-picked sets. Works for every tool except
+    # MaxQuant, whose sweep is ignored (see README, Parameter sweeps).
     # sweep:
     #   fragment_mass_tolerance_ppm: [10, 15]
     #   precursor_mass_tolerance_ppm: [4, 10]

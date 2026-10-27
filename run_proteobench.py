@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config_validator import validate_config
 from runners import RUNNER_MAP
 from runners.base import BaseRunner, RunResult
+from runners.sweep import expand_versions, unsupported_sweep
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,7 +88,10 @@ def build_jobs(cfg: dict, tool_filter: str | None, dataset_filter: str | None) -
             logger.warning("No runner implemented for tool '%s'; skipping.", tool_name)
             continue
 
-        for version_cfg in tool_cfg.get("versions", []):
+        if warning := unsupported_sweep(tool_name, tool_cfg):
+            logger.warning(warning)
+
+        for version_cfg in expand_versions(tool_cfg, tool_name):
             if not version_cfg.get("enabled", False):
                 continue
 

@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import yaml
 from runners import RUNNER_MAP
-from runners.sweep import expand_versions
+from runners.sweep import expand_versions, unsupported_sweep
 
 
 def load_config(path: Path) -> dict:
@@ -40,7 +40,10 @@ def enumerate_jobs(cfg: dict, tool_filter=None, dataset_filter=None) -> list[dic
             print(f"WARNING: no runner for tool '{tool_name}'; skipping.", file=sys.stderr)
             continue
 
-        for version_cfg in expand_versions(tool_cfg):
+        if warning := unsupported_sweep(tool_name, tool_cfg):
+            print(f"WARNING: {warning}", file=sys.stderr)
+
+        for version_cfg in expand_versions(tool_cfg, tool_name):
             if not version_cfg.get("enabled", False):
                 continue
 

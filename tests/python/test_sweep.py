@@ -5,6 +5,7 @@ import pytest
 
 import config_validator as cv
 from enumerate_jobs import enumerate_jobs
+from run_proteobench import build_jobs
 from runners.diann import DIANNRunner
 from runners.sweep import expand_versions, sweep_id, sweep_sets
 
@@ -15,13 +16,13 @@ VERSIONS = [
 
 
 def test_no_sweep_leaves_versions_unchanged():
-    assert expand_versions({"versions": VERSIONS}) == VERSIONS
+    assert expand_versions({"versions": VERSIONS}, "diann") == VERSIONS
 
 
 def test_grid_runs_every_combination_for_every_version():
     tool = {"versions": VERSIONS, "sweep": {"fragment_mass_tolerance_ppm": [10, 15], "extra_args": ["", "--window 8"]}}
     assert len(sweep_sets(tool)) == 4
-    expanded = expand_versions(tool)
+    expanded = expand_versions(tool, "diann")
     assert len(expanded) == 8
     assert len({v["id"] for v in expanded}) == 8
 
@@ -41,9 +42,17 @@ def test_list_gives_explicit_sets_and_scalars_are_single_values():
     assert sweep_sets({"sweep": {"a": 1, "b": [2, 3]}}) == [{"a": 1, "b": 2}, {"a": 1, "b": 3}]
 
 
+def test_duplicate_sets_run_once():
+    # Same set twice, an empty extra_args, and a grid with a repeated value
+    assert sweep_sets({"sweep": [{"a": 1}, {"a": 1}, {"a": 1, "extra_args": ""}, {"a": 2}]}) == [{"a": 1}, {"a": 2}]
+    assert sweep_sets({"sweep": {"a": [10, 10, 15], "extra_args": ["", []]}}) == [{"a": 10}, {"a": 15}]
+    ids = [v["id"] for v in expand_versions({"versions": VERSIONS[:1], "sweep": [{"a": 1}, {"a": 1}]}, "diann")]
+    assert ids == [f"2.5.0-{sweep_id({'a': 1})}"]
+
+
 def test_sweep_overrides_reach_the_runner_and_its_command(tmp_path):
     tool = {"versions": VERSIONS[:1], "sweep": [{"fragment_mass_tolerance_ppm": 7, "match_between_runs": False}]}
-    version = expand_versions(tool)[0]
+    version = expand_versions(tool, "diann")[0]
     runner = DIANNRunner(
         tool_cfg=tool, dataset_name="X",
         dataset_cfg={"acquisition": "DIA", "format": "raw", "path": str(tmp_path), "fasta": str(tmp_path / "db.fasta")},
@@ -65,6 +74,46 @@ def test_enumerate_jobs_lists_one_job_per_set():
     jobs = enumerate_jobs(cfg)
     assert len(jobs) == 4
     assert all(j["version"].count("-") == 1 for j in jobs)
+
+
+def test_standalone_runner_builds_one_job_per_set(tmp_path):
+    cfg = {
+        "global": {"output_dir": str(tmp_path)},
+        "search_params": {"fdr_psm": 0.01},
+        "datasets": {"D": {"acquisition": "DIA", "format": "raw", "path": str(tmp_path), "fasta": str(tmp_path / "db.fasta")}},
+        "tools": {"diann": {"versions": VERSIONS, "datasets": ["D"], "sweep": {"fdr_psm": [0.01, 0.05]}}},
+    }
+    jobs = build_jobs(cfg, None, None)
+    assert len(jobs) == 4
+    assert sorted(j.search_params["fdr_psm"] for j in jobs) == [0.01, 0.01, 0.05, 0.05]
+
+
+MAXQUANT_CFG = {
+    "search_params": {"fdr_psm": 0.01},
+    "datasets": {"D": {"acquisition": "DDA", "format": "raw"}},
+    "tools": {"maxquant": {
+        "versions": [{"id": "2.6.3.0", "image": "mq:2.6.3.0", "maxquant_dll": "/d", "enabled": True}],
+        "datasets": ["D"],
+        "sweep": {"fdr_psm": [0.01, 0.05]},
+    }},
+}
+
+
+def test_maxquant_sweep_is_ignored_with_a_warning(capsys, caplog, tmp_path):
+    tool = MAXQUANT_CFG["tools"]["maxquant"]
+    assert expand_versions(tool, "maxquant") == tool["versions"]
+
+    assert [j["version"] for j in enumerate_jobs(MAXQUANT_CFG)] == ["2.6.3.0"]
+    assert "sweeping maxquant is not supported" in capsys.readouterr().err
+
+    cfg = {**MAXQUANT_CFG, "global": {"output_dir": str(tmp_path)}}
+    assert [j.version_id for j in build_jobs(cfg, None, None)] == ["2.6.3.0"]
+    assert "sweeping maxquant is not supported" in caplog.text
+
+    # Ignored, so it does not have to be valid either
+    errors: list[str] = []
+    cv._validate_sweeps({"maxquant": {**tool, "sweep": {"not_a_param": [1]}}}, {}, tmp_path / "config.yaml", errors)
+    assert errors == []
 
 
 @pytest.mark.parametrize("sweep, expected", [

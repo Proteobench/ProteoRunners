@@ -92,7 +92,7 @@ def main():
         sys.exit(0)
 
     version_cfg = next(
-        (v for v in expand_versions(tool_cfg) if str(v["id"]) == args.version),
+        (v for v in expand_versions(tool_cfg, args.tool) if str(v["id"]) == args.version),
         None,
     )
     if not version_cfg:

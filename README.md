@@ -235,12 +235,16 @@ tools:
       fragment_mass_tolerance_ppm: [10, 15]
       extra_args: ["", "--window 8"]
 
-    # sweep:                                 #l or: explicit sets
+    # sweep:                                 # or: explicit sets
     #   - {fragment_mass_tolerance_ppm: 10}
     #   - {fragment_mass_tolerance_ppm: 15, match_between_runs: false}
 ```
 
 Each set gets its own output folder, `<tool>_v<version>-<hash>`, and its own row in `run_summary_nf.tsv`. The hash depends only on the parameter set, so the same set has the same hash for every version and on every re-run (a finished set is skipped through its `.done` marker). `sweep.json` in the folder records the set, the resulting `search_params` and the `extra_args`; it is kept when outputs are filtered. Without a `sweep:` section nothing changes.
+
+A set that appears twice runs once, and an empty `extra_args` counts as none, so `{fragment_mass_tolerance_ppm: 10}` and `{fragment_mass_tolerance_ppm: 10, extra_args: ""}` are the same set.
+
+**MaxQuant cannot be swept.** Its `sweep:` section is ignored with a warning, and its versions run without it. MaxQuant 2.8+ writes its results to a `combined/` folder next to the raw files, which every MaxQuant run on that dataset shares, so sweep sets running in parallel would mix their results.
 
 ---
 
@@ -335,7 +339,7 @@ nf-test test tests/nextflow                 # about 2 minutes
 - `tests/nextflow/setup_functions.nf.test`: how setup decides what to do per tool, and how it edits `config.yaml` as text.
 - `tests/nextflow/pipeline.nf.test`: non-interactive runs from a fresh folder (first run, missing image, missing dataset, broken downloads, nothing to do). Datasets come from tiny archives in `tests/fixtures/datasets` via `file://` URLs, so no network is needed for them. These tests need Docker; they use fake image tags, the tiny `hello-world` image, and the Sage image for the first-run test.
 
-**Python ([pytest](https://pytest.org))** tests `config_validator.py` and the path handling of `run_single_job.py`, with a fake Docker:
+**Python ([pytest](https://pytest.org))** tests `config_validator.py`, the path handling of `run_single_job.py` (with a fake Docker) and parameter sweeps (`tests/python/test_sweep.py`):
 
 ```bash
 python3 -m venv --system-site-packages .venv && .venv/bin/pip install -r requirements-dev.txt   # once

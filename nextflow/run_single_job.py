@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import yaml
 from runners import RUNNER_MAP
-from runners.sweep import expand_versions
+from runners.sweep import expand_versions, sweep_label
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 def _emit(tool, version, dataset, *, success, skipped=False, runtime_s=0.0,
-          output_dir="", error_msg="", stderr_log="", acquisition=""):
+          output_dir="", error_msg="", stderr_log="", acquisition="", sweep=""):
     """Write a JSON result record to stdout."""
     print(json.dumps({
         "tool":        tool,
@@ -45,6 +45,7 @@ def _emit(tool, version, dataset, *, success, skipped=False, runtime_s=0.0,
         "error_msg":   error_msg,
         "stderr_log":  str(stderr_log) if stderr_log else "",
         "acquisition": acquisition,
+        "sweep":       sweep,
     }))
 
 
@@ -131,7 +132,8 @@ def main():
                 logger.error("[%s v%s / %s] preflight FAIL: %s",
                              args.tool, args.version, args.dataset, err)
             _emit(args.tool, args.version, args.dataset,
-                  success=False, error_msg="Preflight failed: " + "; ".join(errors))
+                  success=False, error_msg="Preflight failed: " + "; ".join(errors),
+                  sweep=sweep_label(version_cfg.get("sweep")))
             sys.exit(0)
 
     # --- run ---
@@ -146,6 +148,7 @@ def main():
         error_msg=result.error_msg,
         stderr_log=result.stderr_log,
         acquisition=runner.acquisition,
+        sweep=sweep_label(version_cfg.get("sweep")),
     )
     sys.exit(0)
 

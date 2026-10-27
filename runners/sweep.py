@@ -19,7 +19,12 @@ Each set becomes its own version entry with id "<version>-<hash>", so it gets
 its own output folder (<tool>_v<version>-<hash>) and its own summary row. The
 hash depends only on the parameter set: the same set has the same hash for
 every version and on every re-run. sweep.json in the output folder records it.
-A set listed twice runs once, and an empty extra_args counts as none.
+A set listed twice runs once, and an empty extra_args counts as none. Sets
+that differ only in spelling (15 vs 15.0, extra_args as a string vs a list)
+are the same set.
+
+Every value list in a mapping is a list of choices, so a parameter whose value
+is itself a list needs a list of lists: variable_mods: [["Oxidation (M)"], []].
 
 MaxQuant cannot be swept: its sweep section is ignored with a warning (see
 NO_SWEEP_TOOLS).
@@ -62,8 +67,26 @@ def sweep_sets(tool_cfg: dict) -> list[dict]:
     return list(unique.values())
 
 
+def _canonical(params: dict) -> dict:
+    """params as they reach the tool, so equivalent spellings hash alike:
+    15.0 is 15, and extra_args "--w 8" is ["--w", "8"]."""
+    out = {k: int(v) if isinstance(v, float) and v.is_integer() else v for k, v in params.items()}
+    if "extra_args" in out:
+        try:
+            out["extra_args"] = _args(out["extra_args"])
+        except ValueError:   # unbalanced quote: left as-is for the validator to report
+            pass
+    return out
+
+
 def sweep_id(params: dict) -> str:
-    return hashlib.sha1(json.dumps(params, sort_keys=True).encode()).hexdigest()[:8]
+    return hashlib.sha1(json.dumps(_canonical(params), sort_keys=True).encode()).hexdigest()[:8]
+
+
+def sweep_label(params: dict | None) -> str:
+    """The set as one short line for the run summary ("" when not a sweep job)."""
+    return ", ".join(f"{k}={shlex.join(v) if isinstance(v, list) and k == 'extra_args' else v}"
+                     for k, v in _canonical(params or {}).items())
 
 
 def _args(raw) -> list[str]:

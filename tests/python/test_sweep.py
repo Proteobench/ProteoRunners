@@ -1,13 +1,16 @@
 """Tests for runners/sweep.py and how the sweep reaches job enumeration, the
 runner's search_params and the config validator. Docker is not needed."""
 
+import csv
+
 import pytest
 
 import config_validator as cv
 from enumerate_jobs import enumerate_jobs
-from run_proteobench import build_jobs
+from run_proteobench import build_jobs, write_summary
+from runners.base import RunResult
 from runners.diann import DIANNRunner
-from runners.sweep import expand_versions, sweep_id, sweep_sets
+from runners.sweep import expand_versions, sweep_id, sweep_label, sweep_sets
 
 VERSIONS = [
     {"id": "2.5.0", "image": "diann:2.5.0", "diann_bin": "/d", "enabled": True},
@@ -48,6 +51,14 @@ def test_duplicate_sets_run_once():
     assert sweep_sets({"sweep": {"a": [10, 10, 15], "extra_args": ["", []]}}) == [{"a": 10}, {"a": 15}]
     ids = [v["id"] for v in expand_versions({"versions": VERSIONS[:1], "sweep": [{"a": 1}, {"a": 1}]}, "diann")]
     assert ids == [f"2.5.0-{sweep_id({'a': 1})}"]
+    # Different spellings of the same set
+    assert sweep_sets({"sweep": [{"a": 15}, {"a": 15.0}, {"x": 1, "extra_args": "--w 8"}, {"x": 1, "extra_args": ["--w", "8"]}]}) \
+        == [{"a": 15}, {"x": 1, "extra_args": "--w 8"}]
+
+
+def test_sweep_label_for_the_summary():
+    assert sweep_label(None) == ""
+    assert sweep_label({"a": 15.0, "extra_args": "--w '8 9'"}) == "a=15, extra_args=--w '8 9'"
 
 
 def test_sweep_overrides_reach_the_runner_and_its_command(tmp_path):
@@ -87,6 +98,11 @@ def test_standalone_runner_builds_one_job_per_set(tmp_path):
     assert len(jobs) == 4
     assert sorted(j.search_params["fdr_psm"] for j in jobs) == [0.01, 0.01, 0.05, 0.05]
 
+    results = [RunResult(tool=j.tool_name, version=j.version_id, dataset=j.dataset_name,
+                         success=True, runtime_s=0.0, output_dir=tmp_path) for j in jobs]
+    rows = list(csv.DictReader(write_summary(results, jobs, tmp_path).open(), delimiter="\t"))
+    assert sorted(r["sweep"] for r in rows) == ["fdr_psm=0.01", "fdr_psm=0.01", "fdr_psm=0.05", "fdr_psm=0.05"]
+
 
 MAXQUANT_CFG = {
     "search_params": {"fdr_psm": 0.01},
@@ -121,6 +137,7 @@ def test_maxquant_sweep_is_ignored_with_a_warning(capsys, caplog, tmp_path):
     ({"not_a_param": [1, 2]}, "not_a_param not in search_params"),
     ({"extra_args": ["--x 'unbalanced"]}, "cannot be parsed"),
     ("fragment_mass_tolerance_ppm", "should be a mapping"),
+    ({"fragment_mass_tolerance_ppm": []}, "gives no parameter sets"),
 ])
 def test_validator_reports_bad_sweeps(sweep, expected, tmp_path):
     errors: list[str] = []

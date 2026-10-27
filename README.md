@@ -10,16 +10,15 @@ Everything runs through Nextflow (`proteobench.nf`), on a local machine or on a 
 
 **Docker is required.** Every search engine (DIA-NN, AlphaDIA, Sage, FragPipe, MaxQuant, MetaMorpheus) now runs from a docker image, there is nothing left to compile or install natively for any tool.
 
-| Dependency                                             | Required for                                                                                                                          | Install                                                                                                                                               |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Docker**                                       | **every tool — mandatory**                                                                                                     | [docs.docker.com/get-docker](https://docs.docker.com/get-docker/)                                                                                      |
+| Dependency | Required for | Install |
+|------------|-------------|---------|
+| **Docker** | **every tool — mandatory** | [docs.docker.com/get-docker](https://docs.docker.com/get-docker/) |
 | Python 3.11+ with `pyyaml`, available as `python3` | Config checks and job enumeration used internally by the pipeline (`rich` is only needed for the standalone `run_proteobench.py`) | `conda env create -f environment.yml` then `conda activate proteobench-pipeline`, or `pip install -r requirements.txt` in a virtual environment |
-| Nextflow 23.10+                                        | Running the pipeline and setup wizard                                                                                                 | `curl -s https://get.nextflow.io \| bash` then move to a directory on `$PATH`                                                                      |
-| `curl`, `tar`, `unzip`                           | Downloading benchmark datasets                                                                                                        | Usually already installed (`sudo apt install curl tar unzip`)                                                                                       |
-| `git`                                                | Building the DIA-NN 2.x image only                                                                                                    | Usually already installed; see [git-scm.com](https://git-scm.com/downloads)                                                                            |
+| Nextflow 23.10+ | Running the pipeline and setup wizard | `curl -s https://get.nextflow.io \| bash` then move to a directory on `$PATH` |
+| `curl`, `tar`, `unzip` | Downloading benchmark datasets | Usually already installed (`sudo apt install curl tar unzip`) |
+| `git` | Building the DIA-NN 2.x image only | Usually already installed; see [git-scm.com](https://git-scm.com/downloads) |
 
 Check that each dependency is available:
-
 ```bash
 docker info            # should print server info, not a connection error
 python3 -c "import yaml; print('pyyaml ok')"   # run this in the environment you start Nextflow from
@@ -41,11 +40,11 @@ nextflow run ProteoBench/ProteoRunners -r v1.0.5
 
 Everything you own is kept in the folder you run the command from:
 
-| What                               | Default location                                                                            | Change with                              |
-| ---------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `config.yaml`                    | `./config.yaml`                                                                           | `--config`                             |
-| Downloaded datasets                | `data/` next to `config.yaml`                                                           | `--data_dir`                           |
-| FragPipe licensed JARs             | `tools/fragpipe_jars/` next to `config.yaml`                                            | (asked by the wizard)                    |
+| What | Default location | Change with |
+|------|------------------|-------------|
+| `config.yaml` | `./config.yaml` | `--config` |
+| Downloaded datasets | `data/` next to `config.yaml` | `--data_dir` |
+| FragPipe licensed JARs | `tools/fragpipe_jars/` next to `config.yaml` | (asked by the wizard) |
 | Results and `run_summary_nf.tsv` | `results/` next to `config.yaml` (asked by the wizard, stored as `global.output_dir`) | `global.output_dir`, `--publish_dir` |
 
 Nextflow caches the pipeline code itself under `~/.nextflow/assets/ProteoBench/ProteoRunners`; nothing of yours is written there. (Older versions defaulted `config.yaml` to that cache. If there is no `config.yaml` in your folder but there is one next to the pipeline code, that one is still used.) Relative paths in `config.yaml` are relative to the folder that holds `config.yaml`.
@@ -79,37 +78,33 @@ Setup-wizard details per tool:
 - **Datasets** — after the tools above are set up, the wizard offers to download benchmark datasets from `nextflow/datasets_catalog.yaml`, scoped to the datasets relevant to your enabled tools (by DDA/DIA acquisition). They are stored in `data/` next to `config.yaml` (change with `--data_dir`). It lists the relevant datasets with their size and the free disk space, and lets you pick `all`, `none`, or specific ones by number. Each dataset is downloaded as an archive (`.tar.gz` or `.zip`) and extracted. An interrupted download resumes on the next setup run where the server allows it, and a half-extracted dataset is detected and extracted again. After extraction the wizard checks that the MS files of the dataset's format are really there. Datasets downloaded during a `--setup` run are also added to the `datasets:` lists of the enabled tools that can use them. The ProteoBench archives unpack as `raws/<acquisition>/` plus `fasta/<name>.zip`; the wizard moves the MS files up into the dataset folder and extracts the FASTA next to them, which is the flat layout the runners expect (datasets downloaded earlier are fixed the same way on the next setup run). The FASTA (and decoy, if present) are detected automatically, and an `mzml/` subfolder is moved to a sibling `<name>_mzml` directory — not a separate dataset entry, but a fallback location tools automatically use whenever they can't read the dataset's native format and need mzML instead (e.g. Sage always; DIA-NN < 2.0 for Thermo `.raw`). Real, resolved paths are written into `datasets:`, and each configured tool's `datasets:` list is filled in automatically — no more `CHANGE_ME` for anything that was downloaded. Datasets already present on disk from an earlier run are reused, not re-downloaded. See "Adding a downloadable dataset" below.
 
 Non-interactive / CI use (skips all prompts, uses these flags instead):
-
 ```bash
 nextflow run proteobench.nf --non_interactive --skip_fragpipe \
     --build_diann_v2 --diann_version 2.1.0,2.5.0 \
     --download_datasets all --data_dir /path/to/data
 ```
-
 `--setup_tools sage,diann` sets up exactly those tools without asking (`none` for no tools); without it, non-interactive mode sets up every tool. `--skip_datasets` skips the dataset step entirely; `--download_datasets` also accepts a comma-separated list of dataset names instead of `all`. With no `--download_datasets` given, non-interactive mode downloads nothing (safe default for CI).
 
 Available dataset names (source of truth: [`nextflow/datasets_catalog.yaml`](nextflow/datasets_catalog.yaml)):
 
-| Name                       | Acquisition | Format | Instrument |
-| -------------------------- | ----------- | ------ | ---------- |
-| `HYE_DDA_Orbitrap`       | DDA         | raw    | Orbitrap   |
-| `HYE_DDA_Astral`         | DDA         | raw    | Astral     |
-| `HYE_Astral`             | DIA         | raw    | Astral     |
-| `HYE_Astral_Single_Cell` | DIA         | raw    | Astral     |
-| `HYE_Astral_lowinput`    | DIA         | raw    | Astral     |
-| `HYE_timsTOF_lowinput`   | DIA         | d      | timstof    |
-| `HYE_AIF`                | DIA         | raw    | Orbitrap   |
-| `HYE_diaPASEF`           | DIA         | d      | timstof    |
-| `PYE_diaPASEF`           | DIA         | d      | timstof    |
-| `Entrapment_DIA`         | DIA         | raw    | Orbitrap   |
+| Name | Acquisition | Format | Instrument |
+|------|------|------|------|
+| `HYE_DDA_Orbitrap` | DDA | raw | Orbitrap |
+| `HYE_DDA_Astral` | DDA | raw | Astral |
+| `HYE_Astral` | DIA | raw | Astral |
+| `HYE_Astral_Single_Cell` | DIA | raw | Astral |
+| `HYE_Astral_lowinput` | DIA | raw | Astral |
+| `HYE_timsTOF_lowinput` | DIA | d | timstof |
+| `HYE_AIF` | DIA | raw | Orbitrap |
+| `HYE_diaPASEF` | DIA | d | timstof |
+| `PYE_diaPASEF` | DIA | d | timstof |
+| `Entrapment_DIA` | DIA | raw | Orbitrap |
 
 To run the wizard again regardless of completeness (e.g. to add a tool you skipped), add `--setup`:
-
 ```bash
 nextflow run ProteoBench/ProteoRunners -r v1.0.4 --setup    # pulled release
 nextflow run proteobench.nf --setup                          # inside a clone
 ```
-
 In a clone, `nextflow run setup.nf` does the same without starting any runs afterwards.
 
 The pipeline reads `config.yaml` from the folder you run it from by default. Each job writes its actual result files under `global.output_dir` from that file. Relative paths in `config.yaml` (`output_dir`, and `path:`, `fasta:` and `fasta_decoy:` under `datasets:`) are resolved relative to the directory that holds `config.yaml`. The repo's `nextflow.config` also reads `config.yaml`: Nextflow's concurrency (`maxForks`) defaults to `global.max_parallel_jobs` (or 6 if unset), and `run_summary_nf.tsv` is published to `global.output_dir` (or `results/` next to `config.yaml` while it is unset or still `CHANGE_ME`). Override either with `--max_parallel_jobs` / `--publish_dir`. `nextflow.config` also lists the defaults of every `--flag` of `proteobench.nf` and `setup.nf`.
@@ -118,17 +113,17 @@ The scripts use Nextflow's strict syntax, which Nextflow 26.04+ requires by defa
 
 ### Common options
 
-| Flag                              | Description                                                                                                                                                          |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--config /path/to/config.yaml` | Path to config file (default: `config.yaml` in the folder you run from)                                                                                            |
-| `--setup`                       | Run the setup wizard first and offer every tool that is not set up yet                                                                                               |
-| `--data_dir /path`              | Where setup downloads datasets (default: `data/` next to `config.yaml`)                                                                                          |
-| `--tool diann`                  | Restrict run to one tool                                                                                                                                             |
-| `--dataset Entrapment_DIA`      | Restrict run to one dataset                                                                                                                                          |
-| `--no_preflight`                | Skip preflight checks before each job                                                                                                                                |
-| `--max_parallel_jobs 4`         | Override Nextflow concurrency (default: `global.max_parallel_jobs`, or 6)                                                                                          |
-| `--publish_dir /path`           | Where `run_summary_nf.tsv` is published (default: `global.output_dir`, or `./results`)                                                                         |
-| `--unfiltered_outputs`          | Keep the full raw tool output of every job. By default, successful jobs are filtered down to the files needed for ProteoBench upload; failed jobs are never filtered |
+| Flag | Description |
+|------|-------------|
+| `--config /path/to/config.yaml` | Path to config file (default: `config.yaml` in the folder you run from) |
+| `--setup` | Run the setup wizard first and offer every tool that is not set up yet |
+| `--data_dir /path` | Where setup downloads datasets (default: `data/` next to `config.yaml`) |
+| `--tool diann` | Restrict run to one tool |
+| `--dataset Entrapment_DIA` | Restrict run to one dataset |
+| `--no_preflight` | Skip preflight checks before each job |
+| `--max_parallel_jobs 4` | Override Nextflow concurrency (default: `global.max_parallel_jobs`, or 6) |
+| `--publish_dir /path` | Where `run_summary_nf.tsv` is published (default: `global.output_dir`, or `./results`) |
+| `--unfiltered_outputs` | Keep the full raw tool output of every job. By default, successful jobs are filtered down to the files needed for ProteoBench upload; failed jobs are never filtered |
 
 Example — run only DIA-NN jobs, skip preflight:
 
@@ -185,14 +180,14 @@ See the [Nextflow executor documentation](https://www.nextflow.io/docs/latest/ex
 
 ## Tool overview
 
-| Tool         | Acquisition      | Input format  | Docker image                                                                                                                                               |
-| ------------ | ---------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| DIA-NN       | DDA (v2.1+), DIA | raw, mzML     | `biocontainers/diann:v1.8.1_cv1` (public) or `diann:2.x` (built locally from [bigbio/quantms-containers](https://github.com/bigbio/quantms-containers)) |
-| AlphaDIA     | DIA              | raw, mzML, .d | `mannlabs/alphadia:latest`                                                                                                                               |
-| Sage         | DDA              | mzML, MGF     | `ghcr.io/lazear/sage:latest`                                                                                                                             |
-| FragPipe     | DDA, DIA         | raw, mzML, .d | `fcyucn/fragpipe:latest` + licensed MSFragger/IonQuant/diaTracer JARs                                                                                    |
-| MaxQuant     | DDA, DIA         | raw           | `quay.io/medbioinf/maxquant:2.6.3.0`, `quay.io/medbioinf/maxquant:2.8.1.0`                                                                             |
-| MetaMorpheus | DDA              | raw, mzML     | `smithchemwisc/metamorpheus:latest`                                                                                                                      |
+| Tool | Acquisition | Input format | Docker image |
+|------|-------------|-------------|----------------|
+| DIA-NN | DDA (v2.1+), DIA | raw, mzML | `biocontainers/diann:v1.8.1_cv1` (public) or `diann:2.x` (built locally from [bigbio/quantms-containers](https://github.com/bigbio/quantms-containers)) |
+| AlphaDIA | DIA | raw, mzML, .d | `mannlabs/alphadia:latest` |
+| Sage | DDA | mzML, MGF | `ghcr.io/lazear/sage:latest` |
+| FragPipe | DDA, DIA | raw, mzML, .d | `fcyucn/fragpipe:latest` + licensed MSFragger/IonQuant/diaTracer JARs |
+| MaxQuant | DDA, DIA | raw | `quay.io/medbioinf/maxquant:2.6.3.0`, `quay.io/medbioinf/maxquant:2.8.1.0` |
+| MetaMorpheus | DDA | raw, mzML | `smithchemwisc/metamorpheus:latest` |
 
 All six images are pulled by the setup wizard (run automatically by `nextflow run proteobench.nf`, or with `--setup`) — see [Quick start](#quick-start) above. There is no native/manual install path any more; every tool runs from its image.
 
@@ -240,9 +235,11 @@ tools:
     #   - {fragment_mass_tolerance_ppm: 15, match_between_runs: false}
 ```
 
-Each set gets its own output folder, `<tool>_v<version>-<hash>`, and its own row in `run_summary_nf.tsv`. The hash depends only on the parameter set, so the same set has the same hash for every version and on every re-run (a finished set is skipped through its `.done` marker). `sweep.json` in the folder records the set, the resulting `search_params` and the `extra_args`; it is kept when outputs are filtered. Without a `sweep:` section nothing changes.
+In a grid, every value list is a list of choices. A parameter whose value is itself a list therefore needs a list of lists: `variable_mods: [["Oxidation (M)"], []]` runs once with and once without the modification.
 
-A set that appears twice runs once, and an empty `extra_args` counts as none, so `{fragment_mass_tolerance_ppm: 10}` and `{fragment_mass_tolerance_ppm: 10, extra_args: ""}` are the same set.
+Each set gets its own output folder, `<tool>_v<version>-<hash>`, and its own row in the run summary, whose `sweep` column shows the set (e.g. `fragment_mass_tolerance_ppm=15, extra_args=--window 8`). The hash depends only on the parameter set, so the same set has the same hash for every version and on every re-run (a finished set is skipped through its `.done` marker). `sweep.json` in the folder records the set, the resulting `search_params` and the `extra_args`; it is kept when outputs are filtered. Without a `sweep:` section nothing changes.
+
+A set that appears twice runs once. Sets that differ only in how they are written are the same set: an empty `extra_args` counts as none, `15` and `15.0` are equal, and `extra_args` written as the string `"--window 8"` equals the list `["--window", "8"]`.
 
 **MaxQuant cannot be swept.** Its `sweep:` section is ignored with a warning, and its versions run without it. MaxQuant 2.8+ writes its results to a `combined/` folder next to the raw files, which every MaxQuant run on that dataset shares, so sweep sets running in parallel would mix their results.
 
@@ -352,25 +349,25 @@ The interactive prompts are not covered by the automated tests: nf-test cannot t
 
 ## Troubleshooting
 
-| Error message                                                                             | Likely cause                                                                                      | Fix                                                                                                                                                                                 |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `still contains 'CHANGE_ME'`                                                            | Path not updated in config                                                                        | Edit `config.yaml` and replace CHANGE_ME                                                                                                                                          |
-| `This computer is not ready yet`                                                        | Docker is missing, not running, or not usable without `sudo`; or `python3` has no `pyyaml`  | Follow the fix printed under the message                                                                                                                                            |
-| `docker image not pulled locally`                                                       | Image not pulled yet                                                                              | Run the pipeline again; setup offers to pull it                                                                                                                                     |
-| `No 'raw' files found`                                                                  | Wrong `format:` or wrong `path:`                                                              | Verify files exist and `format:` matches                                                                                                                                          |
-| `MSFragger/IonQuant/diaTracer JAR not found in jars_dir`                                | Licensed FragPipe JAR missing                                                                     | Run the pipeline with `--setup` and provide the downloaded zip/folder when asked                                                                                                  |
-| `'ext/thermo' folder was not found next to MSFragger jar`                               | MSFragger's native readers weren't copied (pointed the wizard at a bare `.jar`, not its folder) | Delete the MSFragger jar in `jars_dir`, run the pipeline with `--setup` and point at the MSFragger *folder* or zip (which has `ext/`), or switch that dataset to mzML input |
-| `build_command failed: Philosopher decoy generation failed`                             | FASTA's directory isn't writable, or the FASTA is malformed                                       | Check permissions on the FASTA's directory; or set `fasta_decoy:` explicitly to a pre-built one                                                                                   |
-| `no download URL set in the dataset catalog`                                            | Catalog entry still has `url: CHANGE_ME`                                                        | Add the real URL to `nextflow/datasets_catalog.yaml`, then run the pipeline with `--setup`                                                                                      |
-| `not ready to run yet (N problem(s) above)`                                             | `config.yaml` has problems that would make jobs fail                                            | Fix the numbered problems, or run the pipeline with `--setup`                                                                                                                     |
-| `is not valid YAML`                                                                     | A typo in a hand edit of `config.yaml`                                                          | Fix the line shown in the message, or restore `config.yaml.bak`                                                                                                                   |
-| Setup keeps asking about a dataset                                                        | An enabled tool lists a dataset that is not on disk                                               | Download it, or let setup comment it out of the tools' `datasets:` lists                                                                                                          |
-| Dataset download skipped in CI                                                            | Non-interactive mode with no `--download_datasets` (safe default)                               | Pass `--download_datasets all` or a comma-separated list                                                                                                                          |
-| `exit code 1 — check log: ...`                                                         | Tool crashed during search                                                                        | Open the `stderr.log` file shown in the error                                                                                                                                     |
-| Job is skipped unexpectedly                                                               | `.done` marker exists                                                                           | Delete the `.done` file in the output directory, or set `overwrite: true`                                                                                                       |
-| `No jobs to run`                                                                        | All versions have `enabled: false`, or the enabled tools list no dataset                        | Set `enabled: true` for at least one version, and list dataset names from `datasets:` under that tool's `datasets:`                                                           |
-| Setup keeps asking about a DIA-NN version                                                 | That version is `enabled: true` but its image is not present locally                            | Let setup pull or build it, or set `enabled: false` for it (setup offers this)                                                                                                    |
-| `Groovy import declarations are not supported` or `for loops are no longer supported` | An old checkout with Nextflow 26.04+ (strict parser)                                              | Update to the current version, or run with `NXF_SYNTAX_PARSER=v1`                                                                                                                 |
-| `enumerate_jobs.py failed` (Nextflow)                                                   | Python or YAML not on PATH                                                                        | Run Nextflow from the activated conda/pip env; check `python3 -c "import yaml"`                                                                                                   |
-| `No module named 'yaml'` (Nextflow)                                                     | pyyaml not installed                                                                              | `pip install pyyaml`                                                                                                                                                              |
-| Nextflow process hangs                                                                    | `max_parallel_jobs` too high for available cores/RAM                                            | Lower `global.max_parallel_jobs` in `config.yaml` or pass `--max_parallel_jobs N`                                                                                             |
+| Error message | Likely cause | Fix |
+|---------------|-------------|-----|
+| `still contains 'CHANGE_ME'` | Path not updated in config | Edit `config.yaml` and replace CHANGE_ME |
+| `This computer is not ready yet` | Docker is missing, not running, or not usable without `sudo`; or `python3` has no `pyyaml` | Follow the fix printed under the message |
+| `docker image not pulled locally` | Image not pulled yet | Run the pipeline again; setup offers to pull it |
+| `No 'raw' files found` | Wrong `format:` or wrong `path:` | Verify files exist and `format:` matches |
+| `MSFragger/IonQuant/diaTracer JAR not found in jars_dir` | Licensed FragPipe JAR missing | Run the pipeline with `--setup` and provide the downloaded zip/folder when asked |
+| `'ext/thermo' folder was not found next to MSFragger jar` | MSFragger's native readers weren't copied (pointed the wizard at a bare `.jar`, not its folder) | Delete the MSFragger jar in `jars_dir`, run the pipeline with `--setup` and point at the MSFragger *folder* or zip (which has `ext/`), or switch that dataset to mzML input |
+| `build_command failed: Philosopher decoy generation failed` | FASTA's directory isn't writable, or the FASTA is malformed | Check permissions on the FASTA's directory; or set `fasta_decoy:` explicitly to a pre-built one |
+| `no download URL set in the dataset catalog` | Catalog entry still has `url: CHANGE_ME` | Add the real URL to `nextflow/datasets_catalog.yaml`, then run the pipeline with `--setup` |
+| `not ready to run yet (N problem(s) above)` | `config.yaml` has problems that would make jobs fail | Fix the numbered problems, or run the pipeline with `--setup` |
+| `is not valid YAML` | A typo in a hand edit of `config.yaml` | Fix the line shown in the message, or restore `config.yaml.bak` |
+| Setup keeps asking about a dataset | An enabled tool lists a dataset that is not on disk | Download it, or let setup comment it out of the tools' `datasets:` lists |
+| Dataset download skipped in CI | Non-interactive mode with no `--download_datasets` (safe default) | Pass `--download_datasets all` or a comma-separated list |
+| `exit code 1 — check log: ...` | Tool crashed during search | Open the `stderr.log` file shown in the error |
+| Job is skipped unexpectedly | `.done` marker exists | Delete the `.done` file in the output directory, or set `overwrite: true` |
+| `No jobs to run` | All versions have `enabled: false`, or the enabled tools list no dataset | Set `enabled: true` for at least one version, and list dataset names from `datasets:` under that tool's `datasets:` |
+| Setup keeps asking about a DIA-NN version | That version is `enabled: true` but its image is not present locally | Let setup pull or build it, or set `enabled: false` for it (setup offers this) |
+| `Groovy import declarations are not supported` or `for loops are no longer supported` | An old checkout with Nextflow 26.04+ (strict parser) | Update to the current version, or run with `NXF_SYNTAX_PARSER=v1` |
+| `enumerate_jobs.py failed` (Nextflow) | Python or YAML not on PATH | Run Nextflow from the activated conda/pip env; check `python3 -c "import yaml"` |
+| `No module named 'yaml'` (Nextflow) | pyyaml not installed | `pip install pyyaml` |
+| Nextflow process hangs | `max_parallel_jobs` too high for available cores/RAM | Lower `global.max_parallel_jobs` in `config.yaml` or pass `--max_parallel_jobs N` |

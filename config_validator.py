@@ -295,7 +295,10 @@ def _validate_sweeps(tools: dict, search_params: dict, config_path: Path, errors
         if not (isinstance(sweep, dict) or (isinstance(sweep, list) and all(isinstance(s, dict) for s in sweep))):
             errors.append(f"{prefix}: should be a mapping of value lists, or a list of parameter sets.")
             continue
-        for i, params in enumerate(sweep_sets(tool_cfg)):
+        sets = sweep_sets(tool_cfg)
+        if not sets:   # e.g. an empty value list: the versions would silently run unswept
+            errors.append(f"{prefix}: gives no parameter sets. Remove it, or give every key at least one value.")
+        for i, params in enumerate(sets):
             where = f"{prefix} (set {i + 1}: {params})"
             unknown = [k for k in params if k != "extra_args" and k not in search_params]
             if unknown:
